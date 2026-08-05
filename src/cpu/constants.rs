@@ -1,0 +1,330 @@
+// =======================================================
+// src/cpu/constants.rs — MOS 6502/6510/8502 constants and decoding tables
+// =======================================================
+
+use super::decoder::{AddressingMode, OpcodeInfo, Operation};
+
+/* The processor status register stores carry through negative in bits 0 through 7; bit 5 is forced high when a status value is pushed (MOS-6500-PROGRAMMING-1976, processor status register). */
+pub const C_FLAG: u8 = 0x01;
+pub const Z_FLAG: u8 = 0x02;
+pub const I_FLAG: u8 = 0x04;
+pub const D_FLAG: u8 = 0x08;
+pub const B_FLAG: u8 = 0x10;
+pub const U_FLAG: u8 = 0x20;
+pub const V_FLAG: u8 = 0x40;
+pub const N_FLAG: u8 = 0x80;
+/* NMI, reset and IRQ/BRK fetch their little-endian vectors from the top six bytes of the address space (MOS-6500-HARDWARE-1976, interrupt and reset vectors). */
+pub const NMI_VECTOR: u16 = 0xFFFA;
+pub const RESET_VECTOR: u16 = 0xFFFC;
+pub const IRQ_VECTOR: u16 = 0xFFFE;
+pub const INTERRUPT_DELAY: u64 = 2;
+pub const FADE_CYCLES: u64 = 350000;
+
+/* The sentinel is offset below u64::MAX so wrapping subtraction by FADE_CYCLES cannot make an untouched pin look as if it was pulled down recently. */
+pub const NEVER_PULLED_DOWN: u64 = u64::MAX - FADE_CYCLES;
+/* Read-modify-write opcodes are recognised independently of the decoded operation because undocumented composite instructions use the same read, dummy-write and final-write bus sequence. */
+const fn build_rmw_bitmap() -> [u32; 8] {
+	let mut map = [0u32; 8];
+	let opcodes = [
+		0x06, 0x16, 0x0E, 0x1E, 0x46, 0x56, 0x4E, 0x5E, 0x26, 0x36, 0x2E, 0x3E, 0x66, 0x76, 0x6E, 0x7E,
+		0xC6, 0xD6, 0xCE, 0xDE, 0xE6, 0xF6, 0xEE, 0xFE, 0x07, 0x17, 0x0F, 0x1F, 0x03, 0x13, 0x1B, 0x27,
+		0x37, 0x2F, 0x3F, 0x23, 0x33, 0x3B, 0x47, 0x57, 0x4F, 0x5F, 0x43, 0x53, 0x5B, 0x67, 0x77, 0x6F,
+		0x7F, 0x63, 0x73, 0x7B, 0xC7, 0xD7, 0xCF, 0xDF, 0xC3, 0xD3, 0xDB, 0xE7, 0xF7, 0xEF, 0xFF, 0xE3,
+		0xF3, 0xFB,
+	];
+	let mut i = 0;
+	while i < opcodes.len() {
+		let op = opcodes[i] as usize;
+		map[op >> 5] |= 1 << (op & 31);
+		i += 1;
+	}
+	map
+}
+
+pub const RMW_BITMAP: [u32; 8] = build_rmw_bitmap();
+
+/* Mnemonics and the unofficial flag keep the opcode matrix readable for maintainers; the runtime decoder needs only the operation and addressing mode, so the macro intentionally discards the two descriptive fields. */
+macro_rules! op {
+	($_mnem:expr, $op:ident, $mode:ident, $_unofficial:expr) => {
+		OpcodeInfo {
+			op: Operation::$op,
+			mode: AddressingMode::$mode,
+		}
+	};
+}
+
+const KIL: OpcodeInfo = op!("KIL", KIL, Implied, true);
+/* The table covers the complete NMOS opcode matrix, including KIL and the repeatable undocumented instructions needed by contemporary software. */
+pub const OPCODES: [OpcodeInfo; 256] = [
+	/* 00 */ op!("BRK", BRK, Implied, false),
+	/* 01 */ op!("ORA", ORA, IndexedIndirect, false),
+	/* 02 */ KIL,
+	/* 03 */ op!("SLO", SLO, IndexedIndirect, true),
+	/* 04 */ op!("NOP", NOP, ZeroPage, true),
+	/* 05 */ op!("ORA", ORA, ZeroPage, false),
+	/* 06 */ op!("ASL", ASL, ZeroPage, false),
+	/* 07 */ op!("SLO", SLO, ZeroPage, true),
+	/* 08 */ op!("PHP", PHP, Implied, false),
+	/* 09 */ op!("ORA", ORA, Immediate, false),
+	/* 0A */ op!("ASL", ASL, Accumulator, false),
+	/* 0B */ op!("ANC", ANC, Immediate, true),
+	/* 0C */ op!("NOP", NOP, Absolute, true),
+	/* 0D */ op!("ORA", ORA, Absolute, false),
+	/* 0E */ op!("ASL", ASL, Absolute, false),
+	/* 0F */ op!("SLO", SLO, Absolute, true),
+
+	/* 10 */ op!("BPL", BPL, Relative, false),
+	/* 11 */ op!("ORA", ORA, IndirectIndexed, false),
+	/* 12 */ KIL,
+	/* 13 */ op!("SLO", SLO, IndirectIndexed, true),
+	/* 14 */ op!("NOP", NOP, ZeroPageX, true),
+	/* 15 */ op!("ORA", ORA, ZeroPageX, false),
+	/* 16 */ op!("ASL", ASL, ZeroPageX, false),
+	/* 17 */ op!("SLO", SLO, ZeroPageX, true),
+	/* 18 */ op!("CLC", CLC, Implied, false),
+	/* 19 */ op!("ORA", ORA, AbsoluteY, false),
+	/* 1A */ op!("NOP", NOP, Implied, true),
+	/* 1B */ op!("SLO", SLO, AbsoluteY, true),
+	/* 1C */ op!("NOP", NOP, AbsoluteX, true),
+	/* 1D */ op!("ORA", ORA, AbsoluteX, false),
+	/* 1E */ op!("ASL", ASL, AbsoluteX, false),
+	/* 1F */ op!("SLO", SLO, AbsoluteX, true),
+
+	/* 20 */ op!("JSR", JSR, Absolute, false),
+	/* 21 */ op!("AND", AND, IndexedIndirect, false),
+	/* 22 */ KIL,
+	/* 23 */ op!("RLA", RLA, IndexedIndirect, true),
+	/* 24 */ op!("BIT", BIT, ZeroPage, false),
+	/* 25 */ op!("AND", AND, ZeroPage, false),
+	/* 26 */ op!("ROL", ROL, ZeroPage, false),
+	/* 27 */ op!("RLA", RLA, ZeroPage, true),
+	/* 28 */ op!("PLP", PLP, Implied, false),
+	/* 29 */ op!("AND", AND, Immediate, false),
+	/* 2A */ op!("ROL", ROL, Accumulator, false),
+	/* 2B */ op!("ANC", ANC, Immediate, true),
+	/* 2C */ op!("BIT", BIT, Absolute, false),
+	/* 2D */ op!("AND", AND, Absolute, false),
+	/* 2E */ op!("ROL", ROL, Absolute, false),
+	/* 2F */ op!("RLA", RLA, Absolute, true),
+
+	/* 30 */ op!("BMI", BMI, Relative, false),
+	/* 31 */ op!("AND", AND, IndirectIndexed, false),
+	/* 32 */ KIL,
+	/* 33 */ op!("RLA", RLA, IndirectIndexed, true),
+	/* 34 */ op!("NOP", NOP, ZeroPageX, true),
+	/* 35 */ op!("AND", AND, ZeroPageX, false),
+	/* 36 */ op!("ROL", ROL, ZeroPageX, false),
+	/* 37 */ op!("RLA", RLA, ZeroPageX, true),
+	/* 38 */ op!("SEC", SEC, Implied, false),
+	/* 39 */ op!("AND", AND, AbsoluteY, false),
+	/* 3A */ op!("NOP", NOP, Implied, true),
+	/* 3B */ op!("RLA", RLA, AbsoluteY, true),
+	/* 3C */ op!("NOP", NOP, AbsoluteX, true),
+	/* 3D */ op!("AND", AND, AbsoluteX, false),
+	/* 3E */ op!("ROL", ROL, AbsoluteX, false),
+	/* 3F */ op!("RLA", RLA, AbsoluteX, true),
+
+	/* 40 */ op!("RTI", RTI, Implied, false),
+	/* 41 */ op!("EOR", EOR, IndexedIndirect, false),
+	/* 42 */ KIL,
+	/* 43 */ op!("SRE", SRE, IndexedIndirect, true),
+	/* 44 */ op!("NOP", NOP, ZeroPage, true),
+	/* 45 */ op!("EOR", EOR, ZeroPage, false),
+	/* 46 */ op!("LSR", LSR, ZeroPage, false),
+	/* 47 */ op!("SRE", SRE, ZeroPage, true),
+	/* 48 */ op!("PHA", PHA, Implied, false),
+	/* 49 */ op!("EOR", EOR, Immediate, false),
+	/* 4A */ op!("LSR", LSR, Accumulator, false),
+	/* 4B */ op!("ALR", ALR, Immediate, true),
+	/* 4C */ op!("JMP", JMP, Absolute, false),
+	/* 4D */ op!("EOR", EOR, Absolute, false),
+	/* 4E */ op!("LSR", LSR, Absolute, false),
+	/* 4F */ op!("SRE", SRE, Absolute, true),
+
+	/* 50 */ op!("BVC", BVC, Relative, false),
+	/* 51 */ op!("EOR", EOR, IndirectIndexed, false),
+	/* 52 */ KIL,
+	/* 53 */ op!("SRE", SRE, IndirectIndexed, true),
+	/* 54 */ op!("NOP", NOP, ZeroPageX, true),
+	/* 55 */ op!("EOR", EOR, ZeroPageX, false),
+	/* 56 */ op!("LSR", LSR, ZeroPageX, false),
+	/* 57 */ op!("SRE", SRE, ZeroPageX, true),
+	/* 58 */ op!("CLI", CLI, Implied, false),
+	/* 59 */ op!("EOR", EOR, AbsoluteY, false),
+	/* 5A */ op!("NOP", NOP, Implied, true),
+	/* 5B */ op!("SRE", SRE, AbsoluteY, true),
+	/* 5C */ op!("NOP", NOP, AbsoluteX, true),
+	/* 5D */ op!("EOR", EOR, AbsoluteX, false),
+	/* 5E */ op!("LSR", LSR, AbsoluteX, false),
+	/* 5F */ op!("SRE", SRE, AbsoluteX, true),
+
+	/* 60 */ op!("RTS", RTS, Implied, false),
+	/* 61 */ op!("ADC", ADC, IndexedIndirect, false),
+	/* 62 */ KIL,
+	/* 63 */ op!("RRA", RRA, IndexedIndirect, true),
+	/* 64 */ op!("NOP", NOP, ZeroPage, true),
+	/* 65 */ op!("ADC", ADC, ZeroPage, false),
+	/* 66 */ op!("ROR", ROR, ZeroPage, false),
+	/* 67 */ op!("RRA", RRA, ZeroPage, true),
+	/* 68 */ op!("PLA", PLA, Implied, false),
+	/* 69 */ op!("ADC", ADC, Immediate, false),
+	/* 6A */ op!("ROR", ROR, Accumulator, false),
+	/* 6B */ op!("ARR", ARR, Immediate, true),
+	/* 6C */ op!("JMP", JMP, Indirect, false),
+	/* 6D */ op!("ADC", ADC, Absolute, false),
+	/* 6E */ op!("ROR", ROR, Absolute, false),
+	/* 6F */ op!("RRA", RRA, Absolute, true),
+
+	/* 70 */ op!("BVS", BVS, Relative, false),
+	/* 71 */ op!("ADC", ADC, IndirectIndexed, false),
+	/* 72 */ KIL,
+	/* 73 */ op!("RRA", RRA, IndirectIndexed, true),
+	/* 74 */ op!("NOP", NOP, ZeroPageX, true),
+	/* 75 */ op!("ADC", ADC, ZeroPageX, false),
+	/* 76 */ op!("ROR", ROR, ZeroPageX, false),
+	/* 77 */ op!("RRA", RRA, ZeroPageX, true),
+	/* 78 */ op!("SEI", SEI, Implied, false),
+	/* 79 */ op!("ADC", ADC, AbsoluteY, false),
+	/* 7A */ op!("NOP", NOP, Implied, true),
+	/* 7B */ op!("RRA", RRA, AbsoluteY, true),
+	/* 7C */ op!("NOP", NOP, AbsoluteX, true),
+	/* 7D */ op!("ADC", ADC, AbsoluteX, false),
+	/* 7E */ op!("ROR", ROR, AbsoluteX, false),
+	/* 7F */ op!("RRA", RRA, AbsoluteX, true),
+
+	/* 80 */ op!("NOP", NOP, Immediate, true),
+	/* 81 */ op!("STA", STA, IndexedIndirect, false),
+	/* 82 */ op!("NOP", NOP, Immediate, true),
+	/* 83 */ op!("SAX", SAX, IndexedIndirect, true),
+	/* 84 */ op!("STY", STY, ZeroPage, false),
+	/* 85 */ op!("STA", STA, ZeroPage, false),
+	/* 86 */ op!("STX", STX, ZeroPage, false),
+	/* 87 */ op!("SAX", SAX, ZeroPage, true),
+	/* 88 */ op!("DEY", DEY, Implied, false),
+	/* 89 */ op!("NOP", NOP, Immediate, true),
+	/* 8A */ op!("TXA", TXA, Implied, false),
+	/* 8B */ op!("ANE", ANE, Immediate, true),
+	/* 8C */ op!("STY", STY, Absolute, false),
+	/* 8D */ op!("STA", STA, Absolute, false),
+	/* 8E */ op!("STX", STX, Absolute, false),
+	/* 8F */ op!("SAX", SAX, Absolute, true),
+
+	/* 90 */ op!("BCC", BCC, Relative, false),
+	/* 91 */ op!("STA", STA, IndirectIndexed, false),
+	/* 92 */ KIL,
+	/* 93 */ op!("AHX", AHX, IndirectIndexed, true),
+	/* 94 */ op!("STY", STY, ZeroPageX, false),
+	/* 95 */ op!("STA", STA, ZeroPageX, false),
+	/* 96 */ op!("STX", STX, ZeroPageY, false),
+	/* 97 */ op!("SAX", SAX, ZeroPageY, true),
+	/* 98 */ op!("TYA", TYA, Implied, false),
+	/* 99 */ op!("STA", STA, AbsoluteY, false),
+	/* 9A */ op!("TXS", TXS, Implied, false),
+	/* 9B */ op!("TAS", TAS, AbsoluteY, true),
+	/* 9C */ op!("SHY", SHY, AbsoluteX, true),
+	/* 9D */ op!("STA", STA, AbsoluteX, false),
+	/* 9E */ op!("SHX", SHX, AbsoluteY, true),
+	/* 9F */ op!("AHX", AHX, AbsoluteY, true),
+
+	/* A0 */ op!("LDY", LDY, Immediate, false),
+	/* A1 */ op!("LDA", LDA, IndexedIndirect, false),
+	/* A2 */ op!("LDX", LDX, Immediate, false),
+	/* A3 */ op!("LAX", LAX, IndexedIndirect, true),
+	/* A4 */ op!("LDY", LDY, ZeroPage, false),
+	/* A5 */ op!("LDA", LDA, ZeroPage, false),
+	/* A6 */ op!("LDX", LDX, ZeroPage, false),
+	/* A7 */ op!("LAX", LAX, ZeroPage, true),
+	/* A8 */ op!("TAY", TAY, Implied, false),
+	/* A9 */ op!("LDA", LDA, Immediate, false),
+	/* AA */ op!("TAX", TAX, Implied, false),
+	/* AB */ op!("LXA", LXA, Immediate, true),
+	/* AC */ op!("LDY", LDY, Absolute, false),
+	/* AD */ op!("LDA", LDA, Absolute, false),
+	/* AE */ op!("LDX", LDX, Absolute, false),
+	/* AF */ op!("LAX", LAX, Absolute, true),
+
+	/* B0 */ op!("BCS", BCS, Relative, false),
+	/* B1 */ op!("LDA", LDA, IndirectIndexed, false),
+	/* B2 */ KIL,
+	/* B3 */ op!("LAX", LAX, IndirectIndexed, true),
+	/* B4 */ op!("LDY", LDY, ZeroPageX, false),
+	/* B5 */ op!("LDA", LDA, ZeroPageX, false),
+	/* B6 */ op!("LDX", LDX, ZeroPageY, false),
+	/* B7 */ op!("LAX", LAX, ZeroPageY, true),
+	/* B8 */ op!("CLV", CLV, Implied, false),
+	/* B9 */ op!("LDA", LDA, AbsoluteY, false),
+	/* BA */ op!("TSX", TSX, Implied, false),
+	/* BB */ op!("LAS", LAS, AbsoluteY, true),
+	/* BC */ op!("LDY", LDY, AbsoluteX, false),
+	/* BD */ op!("LDA", LDA, AbsoluteX, false),
+	/* BE */ op!("LDX", LDX, AbsoluteY, false),
+	/* BF */ op!("LAX", LAX, AbsoluteY, true),
+
+	/* C0 */ op!("CPY", CPY, Immediate, false),
+	/* C1 */ op!("CMP", CMP, IndexedIndirect, false),
+	/* C2 */ op!("NOP", NOP, Immediate, true),
+	/* C3 */ op!("DCP", DCP, IndexedIndirect, true),
+	/* C4 */ op!("CPY", CPY, ZeroPage, false),
+	/* C5 */ op!("CMP", CMP, ZeroPage, false),
+	/* C6 */ op!("DEC", DEC, ZeroPage, false),
+	/* C7 */ op!("DCP", DCP, ZeroPage, true),
+	/* C8 */ op!("INY", INY, Implied, false),
+	/* C9 */ op!("CMP", CMP, Immediate, false),
+	/* CA */ op!("DEX", DEX, Implied, false),
+	/* CB */ op!("AXS", AXS, Immediate, true),
+	/* CC */ op!("CPY", CPY, Absolute, false),
+	/* CD */ op!("CMP", CMP, Absolute, false),
+	/* CE */ op!("DEC", DEC, Absolute, false),
+	/* CF */ op!("DCP", DCP, Absolute, true),
+
+	/* D0 */ op!("BNE", BNE, Relative, false),
+	/* D1 */ op!("CMP", CMP, IndirectIndexed, false),
+	/* D2 */ KIL,
+	/* D3 */ op!("DCP", DCP, IndirectIndexed, true),
+	/* D4 */ op!("NOP", NOP, ZeroPageX, true),
+	/* D5 */ op!("CMP", CMP, ZeroPageX, false),
+	/* D6 */ op!("DEC", DEC, ZeroPageX, false),
+	/* D7 */ op!("DCP", DCP, ZeroPageX, true),
+	/* D8 */ op!("CLD", CLD, Implied, false),
+	/* D9 */ op!("CMP", CMP, AbsoluteY, false),
+	/* DA */ op!("NOP", NOP, Implied, true),
+	/* DB */ op!("DCP", DCP, AbsoluteY, true),
+	/* DC */ op!("NOP", NOP, AbsoluteX, true),
+	/* DD */ op!("CMP", CMP, AbsoluteX, false),
+	/* DE */ op!("DEC", DEC, AbsoluteX, false),
+	/* DF */ op!("DCP", DCP, AbsoluteX, true),
+
+	/* E0 */ op!("CPX", CPX, Immediate, false),
+	/* E1 */ op!("SBC", SBC, IndexedIndirect, false),
+	/* E2 */ op!("NOP", NOP, Immediate, true),
+	/* E3 */ op!("ISC", ISC, IndexedIndirect, true),
+	/* E4 */ op!("CPX", CPX, ZeroPage, false),
+	/* E5 */ op!("SBC", SBC, ZeroPage, false),
+	/* E6 */ op!("INC", INC, ZeroPage, false),
+	/* E7 */ op!("ISC", ISC, ZeroPage, true),
+	/* E8 */ op!("INX", INX, Implied, false),
+	/* E9 */ op!("SBC", SBC, Immediate, false),
+	/* EA */ op!("NOP", NOP, Implied, false),
+	/* EB */ op!("SBC", SBC, Immediate, true),
+	/* EC */ op!("CPX", CPX, Absolute, false),
+	/* ED */ op!("SBC", SBC, Absolute, false),
+	/* EE */ op!("INC", INC, Absolute, false),
+	/* EF */ op!("ISC", ISC, Absolute, true),
+
+	/* F0 */ op!("BEQ", BEQ, Relative, false),
+	/* F1 */ op!("SBC", SBC, IndirectIndexed, false),
+	/* F2 */ KIL,
+	/* F3 */ op!("ISC", ISC, IndirectIndexed, true),
+	/* F4 */ op!("NOP", NOP, ZeroPageX, true),
+	/* F5 */ op!("SBC", SBC, ZeroPageX, false),
+	/* F6 */ op!("INC", INC, ZeroPageX, false),
+	/* F7 */ op!("ISC", ISC, ZeroPageX, true),
+	/* F8 */ op!("SED", SED, Implied, false),
+	/* F9 */ op!("SBC", SBC, AbsoluteY, false),
+	/* FA */ op!("NOP", NOP, Implied, true),
+	/* FB */ op!("ISC", ISC, AbsoluteY, true),
+	/* FC */ op!("NOP", NOP, AbsoluteX, true),
+	/* FD */ op!("SBC", SBC, AbsoluteX, false),
+	/* FE */ op!("INC", INC, AbsoluteX, false),
+	/* FF */ op!("ISC", ISC, AbsoluteX, true),
+];

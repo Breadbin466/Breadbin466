@@ -1,0 +1,68 @@
+# Path trimming keeps local build paths out of release artefacts and diagnostics.
+cargo-features = ["trim-paths"]
+
+[package]
+name = "Breadbin466"
+version = "0.11.0"
+edition = "2024"
+
+# The shared dependency set covers audio, input, windowing, rendering, image I/O,
+# native file dialogs and serialisation used by every supported desktop platform.
+[dependencies]
+cpal = "0.18.1"
+gilrs = "0.11.2"
+winit = "0.30.13"
+wgpu = "29.0.3"
+bytemuck = { version = "1.25", features = ["derive"] }
+pollster = "0.4"
+png = "0.18"
+rfd = "0.17.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+
+# Native menu and application integration are selected per target so that platform
+# concerns remain outside the emulation core.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", features = ["NSObject", "NSString", "NSDictionary", "NSAttributedString"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSMenu", "NSMenuItem", "NSEvent", "NSCell", "NSAttributedString"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+raw-window-handle = "0.6.2"
+windows = { version = "0.61", features = [
+	"Win32_Foundation",
+	"Win32_UI_WindowsAndMessaging",
+	"Win32_Graphics_Gdi",
+	"Win32_System_LibraryLoader",
+	"Win32_UI_HiDpi",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gdk-pixbuf = "0.18"
+gio = "0.18"
+glib = "0.18"
+gtk = "0.18"
+raw-window-handle = "0.6.2"
+
+# Release builds favour deterministic whole-program optimisation and a small final
+# executable over incremental compilation speed or recoverable unwinding.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = true
+trim-paths = "all"
+
+# Bundle metadata is consumed by cargo-bundle when producing the native macOS
+# application package; it does not affect emulator behaviour.
+[package.metadata.bundle]
+name = "Breadbin466"
+identifier = "com.foursixsix.breadbin466"
+version = "0.11.0"
+copyright = "Copyright © 2025–2026 The Breadbin466 Team"
+category = "public.app-category.entertainment"
+short_description = "C64 Emulator"
+long_description = "Commodore 64 emulator written in Rust."
+icon = ["assets/Breadbin466.icns"]

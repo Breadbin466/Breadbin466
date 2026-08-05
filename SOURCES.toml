@@ -1,0 +1,118 @@
+version = 1
+
+[[source]]
+id = "MOS-6526-1981"
+title = "6526 Complex Interface Adapter (CIA)"
+author = "MOS Technology / Commodore Semiconductor Group"
+publisher = "Commodore Business Machines"
+date = "1981-11"
+url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/6526.zip"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+
+[[source]]
+id = "C64-PRG-1982"
+title = "Commodore 64 Programmer's Reference Guide"
+author = "Commodore Business Machines"
+publisher = "Commodore Business Machines / Howard W. Sams"
+date = "1982"
+url = "https://www.zimmers.net/anonftp/pub/cbm/c64/manuals/c64-programmers-reference-guide.txt"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/c64/manuals/"
+
+[[source]]
+id = "MOS-6500-PROGRAMMING-1976"
+title = "MCS6500 Microcomputer Family Programming Manual"
+author = "MOS Technology"
+publisher = "MOS Technology"
+date = "1976-01"
+url = "https://archive.6502.org/books/mcs6500_family_programming_manual.pdf"
+archive_url = "https://archive.6502.org/books/"
+
+[[source]]
+id = "MOS-6500-HARDWARE-1976"
+title = "MCS6500 Microcomputer Family Hardware Manual"
+author = "MOS Technology"
+publisher = "MOS Technology"
+date = "1976-01"
+url = "https://archive.6502.org/books/mcs6500_family_hardware_manual.pdf"
+archive_url = "https://archive.6502.org/books/"
+
+[[source]]
+id = "SYNERTEK-6500-PROGRAMMING-1976"
+title = "SY6500/MCS6500 Microcomputer Family Programming Manual"
+author = "Synertek"
+publisher = "Synertek"
+date = "1976-08"
+url = "https://syncopate.us/books/Synertek6502ProgrammingManual.html"
+archive_url = "https://syncopate.us/books/"
+
+[[source]]
+id = "ROCKWELL-R6500-PROGRAMMING-1979"
+title = "R6500 Programming Manual"
+author = "Rockwell International"
+publisher = "Rockwell International"
+date = "1979"
+url = "https://datassette.org/manuais/us-estados-unidos-aplicativos-diversos-manuais/r6500-programming-manual"
+archive_url = "https://datassette.org/"
+
+[[source]]
+id = "MOS-6510-DATASHEET-1982"
+title = "6510 Microprocessor with I/O"
+author = "MOS Technology / Commodore Semiconductor Group"
+publisher = "Commodore Business Machines"
+date = "1982-11"
+url = "https://www.c64-wiki.com/wiki/File:Mos_6510_mpu_nov_1982.pdf"
+archive_url = "https://www.c64-wiki.com/wiki/6510"
+
+[[source]]
+id = "C64-PLA-DISSECTED-2012"
+title = "The C64 PLA Dissected"
+author = "Thomas Giesel"
+publisher = "Thomas Giesel"
+date = "2012"
+url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/c64_pla_dissected_r1.1_a4ds.pdf"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+
+[[source]]
+id = "C64-SERVICE-MANUAL-1985"
+title = "Service Manual, Model C64 Computer"
+author = "Commodore Business Machines"
+publisher = "Commodore Business Machines"
+date = "1985-02"
+url = "https://www.zimmers.net/anonftp/pub/cbm/schematics/computers/c64/manual/"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/schematics/computers/c64/"
+
+[[source]]
+id = "MOS-6581-DATASHEET-1982"
+title = "6581 Sound Interface Device (SID)"
+author = "MOS Technology / Commodore Semiconductor Group"
+publisher = "Commodore Business Machines"
+date = "1982"
+url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/6581.zip"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+
+[[source]]
+id = "C64-PRG-SOUND-1982"
+title = "Commodore 64 Programmer's Reference Guide, Programming Sound and 6581 Specifications"
+author = "Commodore Business Machines"
+publisher = "Commodore Business Machines / Howard W. Sams"
+date = "1982"
+url = "https://www.commodore.ca/manuals/c64_programmers_reference/c64-programmers_reference.htm"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/c64/manuals/"
+
+[[source]]
+id = "COMMODORE-REU-USER-GUIDE-1985"
+title = "1700/1750 RAM Expansion Module User's Guide"
+author = "Commodore Electronics Limited"
+publisher = "Commodore Electronics Limited"
+date = "1985"
+url = "https://ar.c64.org/wiki/1700_1750_RAM_Expansion_Module_Users_Guide_Project64.txt"
+archive_url = "https://www.retro-commodore.eu/c128-hardware/"
+
+[[source]]
+id = "BAUER-VIC-II-1996"
+title = "The MOS 6567/6569 Video Controller (VIC-II) and Its Application in the Commodore 64"
+author = "Christian Bauer"
+publisher = "Christian Bauer"
+date = "1996-08-28"
+url = "https://www.cebix.net/VIC-Article.txt"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
