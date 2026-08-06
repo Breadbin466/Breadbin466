@@ -9,4 +9,4 @@ pub mod bus;
 pub mod scheduler;
 pub mod injection;
 
-pub use bus::Motherboard;
+pub use bus::{Motherboard, DebugBusAccess, DebugBusAccessKind};

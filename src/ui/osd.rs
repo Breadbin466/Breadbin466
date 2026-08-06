@@ -2,7 +2,7 @@
 // src/ui/osd.rs — OSD with MHz metrics and hardware status
 // =======================================================
 
-use crate::ui::constants::{CHAR_ROM, FONT_OFFSET_UPPER, FONT_OFFSET_LOWER, PETSCII_CIRCLE, PETSCII_DIAMOND, PETSCII_REWIND, PETSCII_FWD, PETSCII_STOP, PETSCII_EJECT, COLOR_LED_GREEN_ON, COLOR_LED_GREEN_OFF, COLOR_LED_RED_ON, COLOR_LED_RED_OFF, COLOR_TEXT, COLOR_REVERSE_BG, COLOR_REVERSE_FG, COLOR_TRANSPORT_ON, COLOR_TRANSPORT_OFF, LINE_HEIGHT, OSD_MEDIA_LABEL_OVERHEAD, OSD_TOOLTIP_BACKGROUND, OSD_TOOLTIP_BORDER, OSD_TOOLTIP_PADDING_X, OSD_TOOLTIP_PADDING_Y};
+use crate::ui::constants::{CHAR_ROM, FONT_OFFSET_UPPER, FONT_OFFSET_LOWER, PETSCII_CIRCLE, PETSCII_DIAMOND, PETSCII_REWIND, PETSCII_FWD, PETSCII_STOP, PETSCII_EJECT, COLOR_LED_GREEN_ON, COLOR_LED_GREEN_OFF, COLOR_LED_RED_ON, COLOR_LED_RED_OFF, COLOR_TEXT, COLOR_REVERSE_BG, COLOR_REVERSE_FG, COLOR_TRANSPORT_ON, COLOR_TRANSPORT_OFF, LINE_HEIGHT, OSD_MEDIA_LABEL_OVERHEAD, OSD_TOOLTIP_BACKGROUND, OSD_TOOLTIP_BORDER, OSD_TOOLTIP_PADDING_X, OSD_TOOLTIP_PADDING_Y, OSD_SAFE_PADDING_X};
 /* OsdMonitor is a stateless façade retained by the orchestrator; all visible state for one frame is carried explicitly in OsdData. */
 pub struct OsdMonitor;
 
@@ -48,7 +48,7 @@ pub fn draw_status_bar(
 	let bar_y1 = height - gui_height;
 
 	let media_line = fit_media_line(
-		width.saturating_sub(16) / 8,
+		width.saturating_sub(OSD_SAFE_PADDING_X * 2) / 8,
 		&osd.disk_label,
 		&osd.tape_label,
 		&osd.cart_label,
@@ -61,18 +61,18 @@ pub fn draw_status_bar(
 	let text_y1 = bar_y1 + 4;
 	let text_y2 = bar_y1 + 14;
 
-	draw_string(buffer, width, height, 8, text_y1, &media_line.text, COLOR_TEXT);
-	draw_string(buffer, width, height, 8, text_y2, &line2, COLOR_TEXT);
+	draw_string(buffer, width, height, OSD_SAFE_PADDING_X, text_y1, &media_line.text, COLOR_TEXT);
+	draw_string(buffer, width, height, OSD_SAFE_PADDING_X, text_y2, &line2, COLOR_TEXT);
 
 	if let Some((cursor_x, cursor_y)) = osd.hover_cursor {
 		if cursor_y >= text_y1 && cursor_y < text_y1 + 8 {
-			if let Some(label) = media_line.hovered_label(cursor_x.saturating_sub(8) / 8, osd) {
+			if let Some(label) = media_line.hovered_label(cursor_x.saturating_sub(OSD_SAFE_PADDING_X) / 8, osd) {
 				draw_tooltip(buffer, width, height, bar_y1, cursor_x, &label);
 			}
 		}
 	}
 
-	let transport_x = width.saturating_sub(134);
+	let transport_x = width.saturating_sub(134 + OSD_SAFE_PADDING_X);
 
 	let transport = [
 		(PETSCII_CIRCLE,  FONT_OFFSET_UPPER, osd.record_on),
@@ -88,18 +88,18 @@ pub fn draw_status_bar(
 		draw_char_colored(buffer, width, height, transport_x + i * 8, text_y2, glyph, font, col);
 	}
 
-	draw_analog_tape_counter(buffer, width, height, width.saturating_sub(78), text_y2, osd.odometre);
+	draw_analog_tape_counter(buffer, width, height, width.saturating_sub(78 + OSD_SAFE_PADDING_X), text_y2, osd.odometre);
 
 	let track_text = match osd.current_track {
 		Some(track) => format!("{:02}", track),
 		None => "--".to_string(),
 	};
-	draw_string(buffer, width, height, width.saturating_sub(46), text_y2, &track_text, COLOR_TEXT);
+	draw_string(buffer, width, height, width.saturating_sub(46 + OSD_SAFE_PADDING_X), text_y2, &track_text, COLOR_TEXT);
 
 	let activity_color = if osd.activity_led { COLOR_LED_RED_ON  } else { COLOR_LED_RED_OFF  };
 	let power_color    = if osd.power_led    { COLOR_LED_GREEN_ON } else { COLOR_LED_GREEN_OFF };
-	draw_char_colored(buffer, width, height, width.saturating_sub(12), text_y2, PETSCII_CIRCLE, FONT_OFFSET_UPPER, activity_color);
-	draw_char_colored(buffer, width, height, width.saturating_sub(22), text_y2, PETSCII_CIRCLE, FONT_OFFSET_UPPER, power_color);
+	draw_char_colored(buffer, width, height, width.saturating_sub(12 + OSD_SAFE_PADDING_X), text_y2, PETSCII_CIRCLE, FONT_OFFSET_UPPER, activity_color);
+	draw_char_colored(buffer, width, height, width.saturating_sub(22 + OSD_SAFE_PADDING_X), text_y2, PETSCII_CIRCLE, FONT_OFFSET_UPPER, power_color);
 }
 
 struct MediaLineLayout {

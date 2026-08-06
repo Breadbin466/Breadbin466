@@ -2,7 +2,7 @@
 // src/ui/routing.rs — Drag & Drop and Graphical Interers Routing
 // =======================================================
 
-use crate::ui::constants::{OSD_GUI_HEIGHT_CHARS, OSD_BUFFER_SCALE, OSD_TRANSPORT_COUNT};
+use crate::ui::constants::{OSD_GUI_HEIGHT_CHARS, OSD_BUFFER_SCALE, OSD_TRANSPORT_COUNT, OSD_SAFE_PADDING_X};
 use std::path::PathBuf;
 use crate::emulator::context::AppContext;
 
@@ -43,7 +43,7 @@ impl InputRouter {
 		let bar_start_y = buf_h.saturating_sub(gui_px);
 		if by < bar_start_y { return; }
 
-		let transport_x = buf_w.saturating_sub(56 + OSD_TRANSPORT_COUNT * 8 + 8);
+		let transport_x = buf_w.saturating_sub(56 + OSD_TRANSPORT_COUNT * 8 + 8 + OSD_SAFE_PADDING_X);
 		if bx < transport_x { return; }
 
 		let slot = (bx - transport_x) / 8;

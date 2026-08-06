@@ -65,6 +65,8 @@ pub(crate) const OSD_MEDIA_LABEL_OVERHEAD: usize =
 	"Disk: ".len() + "  -  Tape: ".len() + "  -  Cartridge: ".len();
 pub(crate) const OSD_TOOLTIP_PADDING_X: usize = 6;
 pub(crate) const OSD_TOOLTIP_PADDING_Y: usize = 4;
+/* The native window rounds its lower corners into the OSD surface. This inset keeps all status text and controls inside the rectangular safe area on every supported host. */
+pub(crate) const OSD_SAFE_PADDING_X: usize = 16;
 pub(crate) const OSD_TOOLTIP_BORDER: u32 = 0xFF000000;
 pub(crate) const OSD_TOOLTIP_BACKGROUND: u32 = 0xFFFFFFFF;
 pub(crate) const MARGIN_X:          usize = 8;
@@ -73,7 +75,7 @@ pub(crate) const OSD_GUI_HEIGHT_CHARS: usize = 12;pub(crate) const OSD_BUFFER_SC
 pub(crate) const OSD_TRANSPORT_COUNT:  usize = 6;
 /* Application identity strings are shared by native About implementations and packaging metadata. */
 pub const APP_NAME: &str = "Breadbin466";
-pub const VERSION: &str = "0.11.0";
+pub const VERSION: &str = "0.11.1";
 pub const COPYRIGHT: &str = "Copyright © 2025–2026 The Breadbin466 Team";
 pub const DESCRIPTION_PARAGRAPHS: [&str; 3] = [
 	"Breadbin466 is a cycle-accurate Commodore 64 emulator written from scratch in Rust.",

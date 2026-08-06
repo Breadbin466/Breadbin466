@@ -1,22 +1,58 @@
-// =======================================================
-// src/reu/memory.rs — REU and C64 memory transfer helpers
-// =======================================================
+/*
+ * Commodore 1764 expansion DRAM.
+ *
+ * This module is the physical boundary between the MOS 8726 logical address
+ * counter and the nineteen address lines connected by the 1764 hardware.
+ */
 
-use crate::memory::ram::RAMController;
+pub const REU_1764_CAPACITY_BYTES: usize = 512 * 1024;
+const REU_1764_ADDRESS_MASK: usize = REU_1764_CAPACITY_BYTES - 1;
 
-/* The MOS 8726 masters the C64 DRAM bus directly. Cartridge ROM, system ROM,
-   I/O devices and the separate four-bit Color RAM do not replace the 64 KiB
-   DRAM address selected by the controller, so the full $0000-$FFFF range maps
-   to physical main RAM during a REU transfer. */
-#[inline(always)]
-pub(crate) fn read_c64(ram: &RAMController, addr: u16) -> u8 {
-	ram.read(addr)
+/*
+ * ReuMemory represents the eight 64 KiB DRAM banks fitted to a Commodore 1764.
+ * The MOS 8726 retains a full twenty-four-bit logical address, but the 1764
+ * connects only nineteen address lines to DRAM.  Address folding therefore
+ * belongs at this physical-memory boundary rather than in the visible bank
+ * register or in the DMA counters.
+ *
+ * The allocation is deliberately retained while the device is disabled or
+ * reset.  A controller RESET does not erase DRAM, and the menu's enable switch
+ * models reconnecting the expansion rather than manufacturing a new memory
+ * image every time the user changes the setting.
+ */
+pub(crate) struct ReuMemory {
+	bytes: Box<[u8]>,
 }
 
-/* REU writes target physical C64 DRAM, including the RAM hidden beneath the
-   $D000-$DFFF I/O area. Color RAM is a separate device and is therefore not a
-   REU DMA destination. */
-#[inline(always)]
-pub(crate) fn write_c64(ram: &mut RAMController, addr: u16, value: u8) {
-	ram.write(addr, value);
+impl ReuMemory {
+	/* A newly attached 1764 begins with a deterministic zeroed image.  This is a
+	   host-side construction policy only; subsequent controller resets preserve
+	   the contents exactly. */
+	pub(crate) fn new() -> Self {
+		Self { bytes: vec![0; REU_1764_CAPACITY_BYTES].into_boxed_slice() }
+	}
+
+	#[inline]
+	fn physical_offset(logical_address: usize) -> usize {
+		logical_address & REU_1764_ADDRESS_MASK
+	}
+
+	#[inline]
+	pub(crate) fn read(&self, logical_address: usize) -> u8 {
+		self.bytes[Self::physical_offset(logical_address)]
+	}
+
+	#[inline]
+	pub(crate) fn write(&mut self, logical_address: usize, value: u8) {
+		let offset = Self::physical_offset(logical_address);
+		self.bytes[offset] = value;
+	}
+
+	pub(crate) fn capacity(&self) -> usize {
+		REU_1764_CAPACITY_BYTES
+	}
+}
+
+impl Default for ReuMemory {
+	fn default() -> Self { Self::new() }
 }

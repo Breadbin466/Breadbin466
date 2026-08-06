@@ -55,7 +55,13 @@ impl FlashChip {
 		self.toggle_bit = false;
 	}
 
+	fn enable_writes(&mut self) {
+		self.write_enabled = true;
+	}
 
+	fn disable_writes(&mut self) {
+		self.write_enabled = false;
+	}
 
 	fn update_status(&mut self, current_cycle: u64) {
 		if self.is_operating && current_cycle >= self.operation_start_cycle + 500000 {
@@ -199,14 +205,13 @@ impl EasyFlashMapper {
 			romh: BankStorage::new(),
 			bank: 0,
 			active_slot: 0,
-			/* Uninitialised cartridge SRAM is represented by the released-bus value. It is retained across reset and may later be restored from the associated NVRAM file. */
-			ram: Box::new([0xFF; 256]),
+			ram: Box::new([0x00; 256]),
 			flash_lo: FlashChip::new(),
 			flash_hi: FlashChip::new(),
 			register_enabled: true,
 			mapper_type,
 			is_ef3: mapper_type == MapperType::EasyFlash3,
-			control_reg: 0x00,
+			control_reg: 0x02,
 			pending_bank: None,
 			pending_slot: None,
 			pending_control: Option::None,
@@ -230,7 +235,8 @@ impl CartridgeMapper for EasyFlashMapper {
 		self.register_enabled = true;
 		self.flash_lo.reset();
 		self.flash_hi.reset();
-		self.control_reg = 0x00;
+		self.ram.fill(0x00);
+		self.control_reg = 0x02;
 		self.pending_bank = None;
 		self.pending_slot = None;
 		self.pending_control = Option::None;
@@ -309,7 +315,12 @@ impl CartridgeMapper for EasyFlashMapper {
 		if !self.register_enabled {
 			return None;
 		}
-		None
+		match addr {
+			0xDE00 => Some(self.bank as u8),
+			0xDE01 => if self.is_ef3 { Some(self.active_slot as u8) } else { None },
+			0xDE02 => Some(self.control_reg),
+			_ => None,
+		}
 	}
 
 	/* EasyFlash separates bank selection at DE00 from cartridge mode and LED control at DE02. Both registers affect subsequent ROM-window resolution without rewriting flash contents. */
@@ -388,16 +399,17 @@ impl CartridgeMapper for EasyFlashMapper {
 			self.pending_slot = None;
 		}
 		if let Some(c) = self.pending_control {
-			self.control_reg = c & 0x87;
-			/* Jumper-off EasyFlash truth table: mode bit 2 selects direct line control. Values 0/1 are Ultimax, 2/3 are 16K, 4 is disabled, 5 is Ultimax, 6 is 8K and 7 is 16K. */
-			let mode = match self.control_reg & 0x07 {
-				0 | 1 | 5 => crate::cartridge::bus_configuration::CartridgeMode::Ultimax,
-				2 | 3 | 7 => crate::cartridge::bus_configuration::CartridgeMode::Game16K,
-				4 => crate::cartridge::bus_configuration::CartridgeMode::Ram,
-				6 => crate::cartridge::bus_configuration::CartridgeMode::Game8K,
-				_ => unreachable!(),
-			};
-			(lines.game, lines.exrom) = mode.lines();
+			self.control_reg = c;
+			let write_enable = (c & 0x10) != 0;
+			if write_enable {
+				self.flash_lo.enable_writes();
+				self.flash_hi.enable_writes();
+			} else {
+				self.flash_lo.disable_writes();
+				self.flash_hi.disable_writes();
+			}
+			lines.exrom = (c & 0x02) == 0;
+			lines.game = (c & 0x01) == 0;
 			self.pending_control = None;
 		}
 		if let Some(d) = self.pending_disable {

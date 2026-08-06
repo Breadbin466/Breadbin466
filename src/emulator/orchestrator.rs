@@ -13,6 +13,7 @@ use crate::emulator::command_line::{CommandLine, StartupAction};
 use super::context::AppContext;
 use super::builder::SystemBuilder;
 use super::timing::TimeKeeper;
+use super::debugger::Debugger;
 use crate::ui::routing::InputRouter;
 use crate::ui::OsdMonitor;
 use crate::ui::InspectorWindow;
@@ -27,12 +28,12 @@ pub struct Orchestrator {
 	pub(super) current_scale_factor: f64,
 	pub mute_sid_warp:    bool,
 	pub(super) osd_cursor_pos:       (f64, f64),
-	pub(super) cursor_hidden:         bool,
 	pub(super) frame_counter:        u64,
 	pub inspector:            Option<InspectorWindow>,
 	pub inspector_requested:  bool,
 	pub is_dark_mode:         bool,
 	pub(super) paused:                   bool,
+	pub debugger: Option<Debugger>,
 }
 
 impl Orchestrator {
@@ -58,12 +59,12 @@ impl Orchestrator {
 			current_scale_factor:  command_line.scale.map(f64::from).unwrap_or(INITIAL_WINDOW_SCALE),
 			mute_sid_warp:         command_line.mute_warp.unwrap_or(true),
 			osd_cursor_pos:        (-1.0, -1.0),
-			cursor_hidden:          false,
 			frame_counter:         0,
 			inspector:             None,
 			inspector_requested:   command_line.inspector,
 			is_dark_mode,
 			paused:                  false,
+			debugger:                command_line.debugger.then(Debugger::new),
 		};
 
 		super::session::restore_media(&mut driver, cli_has_d64_g64, cli_has_tap);
@@ -106,14 +107,14 @@ impl Orchestrator {
 		driver.context.menu.set_checked(&driver.context.menu.ids.warp_1541, driver.timing.warp_1541);
 		driver.context.menu.set_checked(&driver.context.menu.ids.debug_mute_warp, driver.mute_sid_warp);
 		driver.context.menu.set_checked(&driver.context.menu.ids.debug_c128_2mhz, command_line.mode_8502);
-		driver.context.menu.set_checked(&driver.context.menu.ids.debug_reu_1764, command_line.reu);
+		driver.context.menu.set_checked(&driver.context.menu.ids.reu_1764_512k, command_line.reu);
 
 		Ok(driver)
 	}
 
+	/* Pointer movement is retained solely for OSD hit-testing and tooltips. The host cursor remains visible over the emulated display because hiding it made ordinary desktop interaction surprising and unpopular. */
 	pub fn handle_cursor_moved(&mut self, x: f64, y: f64) {
 		self.osd_cursor_pos = (x, y);
-		self.update_cursor_visibility();
 
 		if self.context.renderer.osd_enabled {
 			self.context.window.request_redraw();
@@ -122,53 +123,10 @@ impl Orchestrator {
 
 	pub fn handle_cursor_left(&mut self) {
 		self.osd_cursor_pos = (-1.0, -1.0);
-		self.set_cursor_hidden(false);
 
 		if self.context.renderer.osd_enabled {
 			self.context.window.request_redraw();
 		}
-	}
-
-	fn set_cursor_hidden(&mut self, hidden: bool) {
-		if self.cursor_hidden == hidden {
-			return;
-		}
-
-		self.context.window.set_cursor_visible(!hidden);
-
-		#[cfg(target_os = "macos")]
-		{
-			use objc2_app_kit::NSCursor;
-
-			if hidden {
-				NSCursor::hide();
-			} else {
-				NSCursor::unhide();
-			}
-		}
-
-		self.cursor_hidden = hidden;
-	}
-
-	pub fn update_cursor_visibility(&mut self) {
-		let (_, y) = self.osd_cursor_pos;
-		let window_height = self.context.window.inner_size().height as f64;
-
-		if y < 0.0 || window_height <= 0.0 {
-			self.set_cursor_hidden(false);
-			return;
-		}
-
-		let emulated_height = if self.context.renderer.osd_enabled {
-			(crate::ui::renderer::CRT_HEIGHT + crate::ui::renderer::GUI_HEIGHT) as f64
-		} else {
-			crate::ui::renderer::CRT_HEIGHT as f64
-		};
-		let display_bottom = window_height
-			* crate::ui::renderer::CRT_HEIGHT as f64
-			/ emulated_height;
-
-		self.set_cursor_hidden(y < display_bottom);
 	}
 
 	pub fn resume_from_pause(&mut self) -> bool {
@@ -215,6 +173,18 @@ impl Orchestrator {
 
 	/* update is the frame-level service loop. It samples host input, updates CIA-visible controls, decides warp policy, runs the required machine frames, and requests presentation only when TimeKeeper says a host frame is due. */
 	pub fn update(&mut self) {
+		/* Debugger commands are consumed only at the host service boundary, where the
+		 * motherboard is quiescent. Temporarily taking ownership avoids aliasing the
+		 * debugger with AppContext while a command inspects or mutates machine state. */
+		if let Some(mut debugger) = self.debugger.take() {
+			debugger.poll_commands(&mut self.context);
+			let debugger_paused = debugger.paused;
+			self.debugger = Some(debugger);
+			if debugger_paused {
+				self.context.input.clear_frame();
+				return;
+			}
+		}
 		if self.paused {
 			self.context.input.clear_frame();
 			return;
@@ -269,51 +239,98 @@ impl Orchestrator {
 		}
 	}
 
-	/* A normal frame advances exactly the PAL cycle count. The const generic keeps the debug clock path outside the inner branch when disabled. */
+	/*
+	 * A frame selects its execution path once before entering the PAL cycle loop.
+	 * Keeping the optional debugger test outside the hot loop is essential in Warp:
+	 * even a perfectly predictable Option branch repeated nearly twenty thousand
+	 * times per frame measurably reduces throughput.  The normal path therefore
+	 * contains only the machine tick selected by the const generic.
+	 */
+	/*
+	 * Optional hardware is selected once at the frame boundary.  The REU-disabled
+	 * instantiation calls the motherboard entry point that contains no REC
+	 * arbitration or REU interrupt work, while the enabled instantiation preserves
+	 * the complete DMA contract.  Menu and command-line changes are applied only at
+	 * host service boundaries, so the selection remains stable for the frame.
+	 */
 	#[inline(never)]
-	fn run_machine_cycles<const C128_DEBUG: bool>(&mut self) {
-		let machine = &mut self.context.machine;
-		for _ in 0..CYCLES_PER_FRAME {
-			if C128_DEBUG {
-				machine.tick_cycle_c128_debug();
-			} else {
-				machine.tick_cycle();
+	fn run_machine_cycles<const C128_DEBUG: bool, const REU_ENABLED: bool>(&mut self) {
+		if self.debugger.is_some() {
+			for _ in 0..CYCLES_PER_FRAME {
+				if !self.run_debugger_cycle(C128_DEBUG, REU_ENABLED) { break; }
+			}
+		} else if C128_DEBUG {
+			for _ in 0..CYCLES_PER_FRAME {
+				if REU_ENABLED { self.context.machine.tick_cycle_c128_debug_reu(); }
+				else { self.context.machine.tick_cycle_c128_debug(); }
+			}
+		} else {
+			for _ in 0..CYCLES_PER_FRAME {
+				if REU_ENABLED { self.context.machine.tick_cycle_reu(); }
+				else { self.context.machine.tick_cycle(); }
 			}
 		}
 	}
 
+	/*
+	 * A debugger-controlled cycle brackets exactly one motherboard cycle with an
+	 * instruction-boundary gate and a completed-bus-cycle observation. The machine
+	 * is never stopped halfway through a CPU micro-operation merely because the host
+	 * console delivered a command.
+	 */
+	fn run_debugger_cycle(&mut self, c128_debug: bool, reu_enabled: bool) -> bool {
+		let Some(mut debugger) = self.debugger.take() else { return true; };
+		if !debugger.before_cycle(&mut self.context) {
+			self.debugger = Some(debugger);
+			return false;
+		}
+		match (c128_debug, reu_enabled) {
+			(true, true) => self.context.machine.tick_cycle_c128_debugger_reu(),
+			(true, false) => self.context.machine.tick_cycle_c128_debugger(),
+			(false, true) => self.context.machine.tick_cycle_debugger_reu(),
+			(false, false) => self.context.machine.tick_cycle_debugger(),
+		}
+		debugger.after_cycle(&mut self.context);
+		let keep_running = !debugger.paused;
+		self.debugger = Some(debugger);
+		keep_running
+	}
+
 	/* Tape transport is sampled at machine-cycle granularity. Flux playback drives CIA1 FLAG, recording samples the 6510 cassette-write pin, and motor transitions immediately refresh cassette sense before the next CPU cycle. */
 	#[inline(never)]
-	fn run_tape_cycles<const C128_DEBUG: bool>(&mut self, play_pressed: bool, mut motor_on: bool) {
-		let machine = &mut self.context.machine;
-		let datassette = &mut self.context.datassette;
-		let record_pressed = datassette.record_pressed;
+	fn run_tape_cycles<const C128_DEBUG: bool, const REU_ENABLED: bool>(&mut self, play_pressed: bool, mut motor_on: bool) {
+		let record_pressed = self.context.datassette.record_pressed;
+		let debugger_active = self.debugger.is_some();
 
 		for _ in 0..CYCLES_PER_FRAME {
-			/* READ and RECORD are mutually exclusive signal paths. Both consume exactly one machine-cycle opportunity while the mechanical transport is moving. */
 			if play_pressed && motor_on {
 				if record_pressed {
-					datassette.record_cycle_tick(machine.cpu.port.cassette_write);
-				} else if datassette.clock_tick(motor_on) {
-					machine.memory.cia1.set_flag_pin(false);
-				} else if datassette.state == crate::datassette::TapeState::Idle {
-					machine.memory.cia1.set_flag_pin(true);
+					let cassette_write = self.context.machine.cpu.port.cassette_write;
+					self.context.datassette.record_cycle_tick(cassette_write);
+				} else if self.context.datassette.clock_tick(motor_on) {
+					self.context.machine.memory.cia1.set_flag_pin(false);
+				} else if self.context.datassette.state == crate::datassette::TapeState::Idle {
+					self.context.machine.memory.cia1.set_flag_pin(true);
 				}
 			}
 
-			if C128_DEBUG {
-				machine.tick_cycle_c128_debug();
+			if debugger_active {
+				if !self.run_debugger_cycle(C128_DEBUG, REU_ENABLED) { break; }
+			} else if C128_DEBUG {
+				if REU_ENABLED { self.context.machine.tick_cycle_c128_debug_reu(); }
+				else { self.context.machine.tick_cycle_c128_debug(); }
+			} else if REU_ENABLED {
+				self.context.machine.tick_cycle_reu();
 			} else {
-				machine.tick_cycle();
+				self.context.machine.tick_cycle();
 			}
 
-			/* The motor output may change during the just-completed CPU cycle. Sense is refreshed at that boundary so the following cycle observes the new mechanical condition. */
-			let new_motor_on = (machine.cpu.port.output & 0x20) == 0;
+			let new_motor_on = (self.context.machine.cpu.port.output & 0x20) == 0;
 			if new_motor_on != motor_on {
 				motor_on = new_motor_on;
-				let total_cycles = machine.clock.total_cycles;
-				let model = machine.cpu.model;
-				machine.cpu.port.set_cassette_sense(play_pressed, total_cycles, model);
+				let total_cycles = self.context.machine.clock.total_cycles;
+				let model = self.context.machine.cpu.model;
+				self.context.machine.cpu.port.set_cassette_sense(play_pressed, total_cycles, model);
 			}
 		}
 	}
@@ -344,17 +361,22 @@ impl Orchestrator {
 		}
 
 		let c128_debug = self.context.machine.memory.c128_2mhz_debug_enabled;
+		let reu_enabled = self.context.machine.memory.reu.enabled;
 		if has_tape {
 			let motor_on = (self.context.machine.cpu.port.output & 0x20) == 0;
-			if c128_debug {
-				self.run_tape_cycles::<true>(play_pressed, motor_on);
-			} else {
-				self.run_tape_cycles::<false>(play_pressed, motor_on);
+			match (c128_debug, reu_enabled) {
+				(true, true) => self.run_tape_cycles::<true, true>(play_pressed, motor_on),
+				(true, false) => self.run_tape_cycles::<true, false>(play_pressed, motor_on),
+				(false, true) => self.run_tape_cycles::<false, true>(play_pressed, motor_on),
+				(false, false) => self.run_tape_cycles::<false, false>(play_pressed, motor_on),
 			}
-		} else if c128_debug {
-			self.run_machine_cycles::<true>();
 		} else {
-			self.run_machine_cycles::<false>();
+			match (c128_debug, reu_enabled) {
+				(true, true) => self.run_machine_cycles::<true, true>(),
+				(true, false) => self.run_machine_cycles::<true, false>(),
+				(false, true) => self.run_machine_cycles::<false, true>(),
+				(false, false) => self.run_machine_cycles::<false, false>(),
+			}
 		}
 
 		if has_tape && is_recording {
@@ -432,12 +454,32 @@ impl Orchestrator {
 		)
 	}
 
+	/* User resizing is constrained before the GPU surface is reconfigured. This keeps the host window and the emulated presentation in the same proportion instead of merely letterboxing a wrongly shaped window. The corrective request produces one follow-up resize event, which is accepted once its integer dimensions are within the renderer's one-pixel tolerance. */
 	pub fn handle_resize(&mut self, width: u32, height: u32) {
+		if let Some((locked_width, locked_height)) = self.context.renderer.constrain_resize(width, height) {
+			#[cfg(target_os = "linux")]
+			crate::ui::shell::Shell::resize_content(locked_width, locked_height);
+			#[cfg(not(target_os = "linux"))]
+			let _ = self.context.window.request_inner_size(winit::dpi::PhysicalSize::new(locked_width, locked_height));
+			return;
+		}
+
 		let scale = self.context.renderer.handle_resize(width, height);
 		if scale > 0.0 {
 			self.current_scale_factor = scale;
 		}
-		self.update_cursor_visibility();
+
+		/* Scale menu checks represent exact presets, not the nearest arbitrary zoom.
+		 * Free resizing clears the whole radio group; landing exactly on a native
+		 * 1x, 2x or 3x size selects only that corresponding entry. */
+		let ids = self.context.menu.ids.clone();
+		let scale_ids = [ids.scale_1x.as_str(), ids.scale_2x.as_str(), ids.scale_3x.as_str()];
+		match self.context.renderer.integer_scale_for_window_size(width, height) {
+			Some(1) => self.context.menu.set_radio_selection(&ids.scale_1x, &scale_ids),
+			Some(2) => self.context.menu.set_radio_selection(&ids.scale_2x, &scale_ids),
+			Some(3) => self.context.menu.set_radio_selection(&ids.scale_3x, &scale_ids),
+			_ => self.context.menu.set_radio_selection("", &scale_ids),
+		}
 	}
 
 	pub fn handle_input_event(&mut self, key: KeyCode, state: ElementState) {
@@ -451,7 +493,6 @@ impl Orchestrator {
 
 	pub fn handle_menu_event(&mut self, id: &str) {
 		super::commands::handle_menu_event(self, id);
-		self.update_cursor_visibility();
 	}
 
 	pub fn get_next_frame_time(&self) -> Instant {

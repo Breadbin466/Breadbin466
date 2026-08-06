@@ -3,7 +3,7 @@ cargo-features = ["trim-paths"]
 
 [package]
 name = "Breadbin466"
-version = "0.11.0"
+version = "0.11.1"
 edition = "2024"
 
 # The shared dependency set covers audio, input, windowing, rendering, image I/O,
@@ -60,7 +60,7 @@ trim-paths = "all"
 [package.metadata.bundle]
 name = "Breadbin466"
 identifier = "com.foursixsix.breadbin466"
-version = "0.11.0"
+version = "0.11.1"
 copyright = "Copyright © 2025–2026 The Breadbin466 Team"
 category = "public.app-category.entertainment"
 short_description = "C64 Emulator"

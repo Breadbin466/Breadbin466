@@ -46,7 +46,7 @@ pub(super) fn redraw_inspector(orchestrator: &mut Orchestrator) {
 		format!("Mute SID (Warp)  : {}", if orchestrator.mute_sid_warp { "ON" } else { "OFF" }),
 		format!("Mute Audio       : {}", if orchestrator.context.history.mute_enabled { "ON" } else { "OFF" }),
 		format!("OSD              : {}", if orchestrator.context.history.osd_enabled { "ON" } else { "OFF" }),
-		format!("1764 REU (512 KB): {}", if orchestrator.context.machine.memory.reu.enabled { "ON" } else { "OFF" }),
+		format!("1764 REU 512 KB  : {}", if orchestrator.context.machine.memory.reu.enabled { "ON" } else { "OFF" }),
 		format!("8502 Mode        : {}", if orchestrator.context.machine.memory.c128_2mhz_debug_enabled { "ON" } else { "OFF" }),
 		"".to_string(),
 		format!("Joystick         : {}", orchestrator.context.joystick.as_ref().map(|joy| joy.get_status_string()).unwrap_or_else(|| "None".to_string())),

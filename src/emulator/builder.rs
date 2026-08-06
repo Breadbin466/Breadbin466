@@ -43,7 +43,7 @@ impl SystemBuilder {
 		};
 
 		let window_attrs = Window::default_attributes()
-			.with_title("Breadbin466 0.11.0 – PAL Assy 250466 Commodore 64 emulator")
+			.with_title("Breadbin466 0.11.1 – PAL Assy 250466 Commodore 64 emulator")
 			.with_resizable(true);
 		#[cfg(target_os = "linux")]
 		let window_attrs = window_attrs.with_inner_size(PhysicalSize::new(width as u32, height as u32));
@@ -96,9 +96,11 @@ impl SystemBuilder {
 		if command_line.mode_8502 {
 			machine.set_c128_debug_enabled(true);
 		}
+		/* Command-line REU selection follows the same controller-owned activation
+		 * path as the Computer menu. This keeps allocation, DMA cancellation and IRQ
+		 * release semantics in the REU rather than duplicating them in host setup. */
 		if command_line.reu {
-			machine.memory.reu.enabled = true;
-			machine.memory.reu.storage = Some(Box::new([0u8; 512 * 1024]));
+			machine.memory.reu.set_enabled(true);
 		}
 		if let Err(e) = machine.init_roms() {
 			return Err(e);

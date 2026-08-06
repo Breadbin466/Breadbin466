@@ -49,7 +49,11 @@ pub struct CommandLine {
 	pub mute: bool,
 	pub mute_warp: Option<bool>,
 	pub mode_8502: bool,
+	/* Machine expansion selection remains independent from debugger startup: the
+	 * REU is ordinary emulated hardware, while the debugger changes only host-side
+	 * execution control and observation policy. */
 	pub reu: bool,
+	pub debugger: bool,
 }
 
 impl Default for CommandLine {
@@ -76,6 +80,7 @@ impl Default for CommandLine {
 			mute_warp: None,
 			mode_8502: false,
 			reu: false,
+			debugger: false,
 		}
 	}
 }
@@ -136,6 +141,7 @@ impl CommandLine {
 				"--no-mute-warp" => result.mute_warp = Some(false),
 				"--8502" => result.mode_8502 = true,
 				"--reu" => result.reu = true,
+				"--debugger" | "--monitor" => result.debugger = true,
 				_ if argument.starts_with('-') => return Err(format!("Unknown option: {argument}")),
 				_ => assign_positional_media(&mut result, PathBuf::from(argument))?,
 			}
@@ -170,7 +176,7 @@ impl CommandLine {
 	}
 
 	pub fn help() -> &'static str {
-		"Breadbin466 [MEDIA] [OPTIONS]\n\nMedia:\n  --disk FILE\n  --tape FILE\n  --cartridge FILE\n  --prg FILE\n  --load-directory\n  --load-first\n  --load-first-run\n\nMachine:\n  --drive on|off\n  --8502\n  --reu\n\nJoystick:\n  --joystick auto|keyboard|gilrs|none\n  --joystick-port 1|2\n\nExecution:\n  --warp\n  --warp-1541\n  --freeze\n  --cartridge-menu\n\nDisplay:\n  --fullscreen\n  --inspector\n  --osd\n  --no-osd\n  --scale 1|2|3\n\nAudio:\n  --mute\n  --mute-warp\n  --no-mute-warp\n\nCommands:\n  create disk FILE\n  create tape FILE\n\nGeneral:\n  --help\n"
+		"Breadbin466 [MEDIA] [OPTIONS]\n\nMedia:\n  --disk FILE\n  --tape FILE\n  --cartridge FILE\n  --prg FILE\n  --load-directory\n  --load-first\n  --load-first-run\n\nMachine:\n  --drive on|off\n  --8502\n  --reu\n  --debugger             Start paused with the terminal debugger\n\nJoystick:\n  --joystick auto|keyboard|gilrs|none\n  --joystick-port 1|2\n\nExecution:\n  --warp\n  --warp-1541\n  --freeze\n  --cartridge-menu\n\nDisplay:\n  --fullscreen\n  --inspector\n  --osd\n  --no-osd\n  --scale 1|2|3\n\nAudio:\n  --mute\n  --mute-warp\n  --no-mute-warp\n\nCommands:\n  create disk FILE\n  create tape FILE\n\nGeneral:\n  --help\n"
 	}
 }
 

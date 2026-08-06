@@ -1,62 +1,95 @@
-// =======================================================
-// src/reu/registers.rs — MOS 8726 register interface
-// =======================================================
+/*
+ * MOS 8726 register interface.
+ *
+ * Register accesses are kept separate from DMA execution so that CPU-visible
+ * latches, live counters and command side effects remain easy to audit.  The
+ * controller decodes five low address bits; unused positions therefore return
+ * an undriven high value rather than aliasing implemented registers.
+ */
 
+use super::constants::{
+	ADDRESS_CONTROL, ADDRESS_CONTROL_UNUSED_READ_HIGH, COMMAND, COMMAND_EXECUTE,
+	COMMAND_FF00_DISABLE, COMMAND_WRITABLE_MASK, C64_ADDRESS_HIGH, C64_ADDRESS_LOW,
+	INTERRUPT_MASK, INTERRUPT_UNUSED_READ_HIGH, REU_ADDRESS_BANK, REU_ADDRESS_HIGH,
+	REU_ADDRESS_LOW, STATUS, STATUS_EVENT_MASK, TRANSFER_LENGTH_HIGH,
+	TRANSFER_LENGTH_LOW, UNUSED_REGISTER_VALUE,
+};
 use super::reu::Reu;
 
 impl Reu {
-	/* The REC decodes five low address bits. Registers $0B-$1F are unused and read as an undriven $FF value. */
+	/*
+	 * Reading STATUS acknowledges all latched events and releases the REU IRQ
+	 * request after returning the pre-acknowledge value to the CPU.
+	 */
 	pub fn read(&mut self, addr: u16) -> u8 {
 		let index = (addr & 0x1F) as usize;
 		if index >= self.regs.len() {
-			return 0xFF;
+			return UNUSED_REGISTER_VALUE;
 		}
+
 		let value = match index {
-			6 => self.regs[6] | 0xF8,
-			9 => self.regs[9] | 0x1F,
-			10 => self.regs[10] | 0x3F,
+			INTERRUPT_MASK => self.regs[INTERRUPT_MASK] | INTERRUPT_UNUSED_READ_HIGH,
+			ADDRESS_CONTROL => self.regs[ADDRESS_CONTROL] | ADDRESS_CONTROL_UNUSED_READ_HIGH,
 			_ => self.regs[index],
 		};
-		if index == 0 {
-			self.regs[0] &= 0x1F;
+
+		if index == STATUS {
+			self.regs[STATUS] &= !STATUS_EVENT_MASK;
 			self.irq_pending = false;
 		}
 		value
 	}
 
-	/* Address and length writes update the half-autoload shadows. COMMAND bit 4 disables the $FF00 trigger, so an armed command starts immediately when that bit is set. */
+	/*
+	 * Address and length writes update the Autoload shadows immediately.  A
+	 * command with EXECUTE set begins at once when FF00 triggering is disabled;
+	 * otherwise the controller remains armed until the designated CPU access.
+	 */
 	pub fn write(&mut self, addr: u16, value: u8) {
 		let index = (addr & 0x1F) as usize;
 		if index >= self.regs.len() {
 			return;
 		}
+
 		match index {
-			0 => {}
-			1 => {
-				self.regs[1] = value;
+			STATUS => {}
+			COMMAND => {
+				self.regs[COMMAND] = value & COMMAND_WRITABLE_MASK;
 				self.waiting_ff00 = false;
-				if value & 0x80 != 0 {
-					if value & 0x10 != 0 { self.start_dma(); } else { self.waiting_ff00 = true; }
+				if self.regs[COMMAND] & COMMAND_EXECUTE != 0 {
+					if self.regs[COMMAND] & COMMAND_FF00_DISABLE != 0 {
+						self.start_dma();
+					} else {
+						self.waiting_ff00 = true;
+					}
 				}
 			}
-			2 | 3 => {
+			C64_ADDRESS_LOW | C64_ADDRESS_HIGH => {
 				self.regs[index] = value;
-				self.shadow_c64_addr = u16::from(self.regs[2]) | (u16::from(self.regs[3]) << 8);
+				self.shadow_c64_addr = u16::from(self.regs[C64_ADDRESS_LOW])
+					| (u16::from(self.regs[C64_ADDRESS_HIGH]) << 8);
 			}
-			4 | 5 => {
+			REU_ADDRESS_LOW | REU_ADDRESS_HIGH | REU_ADDRESS_BANK => {
 				self.regs[index] = value;
-				self.shadow_reu_addr = usize::from(self.regs[4]) | (usize::from(self.regs[5]) << 8) | (usize::from(self.regs[6] & 0x07) << 16);
+				/*
+				 * The bank latch retains all eight written bits.  A 1764 connects only
+				 * three bank lines to DRAM, so physical wrapping belongs in ReuMemory.
+				 */
+				self.shadow_reu_addr = usize::from(self.regs[REU_ADDRESS_LOW])
+					| (usize::from(self.regs[REU_ADDRESS_HIGH]) << 8)
+					| (usize::from(self.regs[REU_ADDRESS_BANK]) << 16);
 			}
-			6 => {
-				self.regs[6] = (value & 0x07) | 0xF8;
-				self.shadow_reu_addr = usize::from(self.regs[4]) | (usize::from(self.regs[5]) << 8) | (usize::from(self.regs[6] & 0x07) << 16);
-			}
-			7 | 8 => {
+			TRANSFER_LENGTH_LOW | TRANSFER_LENGTH_HIGH => {
 				self.regs[index] = value;
-				self.shadow_len = usize::from(self.regs[7]) | (usize::from(self.regs[8]) << 8);
+				self.shadow_len = usize::from(self.regs[TRANSFER_LENGTH_LOW])
+					| (usize::from(self.regs[TRANSFER_LENGTH_HIGH]) << 8);
 			}
-			9 => self.regs[9] = value | 0x1F,
-			10 => self.regs[10] = value | 0x3F,
+			INTERRUPT_MASK => {
+				self.regs[INTERRUPT_MASK] = value | INTERRUPT_UNUSED_READ_HIGH;
+			}
+			ADDRESS_CONTROL => {
+				self.regs[ADDRESS_CONTROL] = value | ADDRESS_CONTROL_UNUSED_READ_HIGH;
+			}
 			_ => {}
 		}
 	}

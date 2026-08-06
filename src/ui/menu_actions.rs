@@ -175,14 +175,13 @@ impl MenuHandler {
 			context.history.mute_enabled = !context.history.mute_enabled;
 			context.history.save_forced();
 			context.menu.set_checked(&ids.debug_mute_global, context.history.mute_enabled);
-		} else if id == ids.debug_reu_1764 {
-			let current = context.machine.memory.reu.enabled;
-			let next = !current;
-			context.machine.memory.reu.enabled = next;
-			if next && context.machine.memory.reu.storage.is_none() {
-				context.machine.memory.reu.storage = Some(Box::new([0u8; 512 * 1024]));
-			}
-			context.menu.set_checked(&ids.debug_reu_1764, next);
+		} else if id == ids.reu_1764_512k {
+			/* The Computer menu toggles an installed expansion device, not a debug aid.
+			 * Controller-owned activation preserves DRAM allocation while cancelling any
+			 * in-flight DMA and releasing its interrupt line when disabled. */
+			let next = !context.machine.memory.reu.enabled;
+			context.machine.memory.reu.set_enabled(next);
+			context.menu.set_checked(&ids.reu_1764_512k, next);
 		} else if id == ids.debug_c128_2mhz {
 			let enabled = !context.machine.memory.c128_2mhz_debug_enabled;
 			context.machine.set_c128_debug_enabled(enabled);

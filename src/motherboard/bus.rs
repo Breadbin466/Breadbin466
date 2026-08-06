@@ -29,20 +29,46 @@ pub enum DriveMode {
 }
 
 /* CpuBus is the narrow adapter that lets the CPU issue bus cycles without owning the VIC-II or the complete motherboard. Memory performs PLA routing and device dispatch. */
-pub struct CpuBus<'a> {
-	pub memory: &'a mut Memory,
-	pub vic: &'a mut VicII,
+
+/*
+ * The debugger observes the final CPU bus transaction rather than instrumenting
+ * individual memory devices. One completed access is retained per motherboard
+ * cycle, which is sufficient for read/write watchpoints and does not turn normal
+ * execution into an unbounded trace.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugBusAccessKind { Read, Write }
+
+#[derive(Debug, Clone, Copy)]
+pub struct DebugBusAccess {
+	pub kind: DebugBusAccessKind,
+	pub addr: u16,
+	pub value: u8,
+	pub cycle: u64,
 }
 
-impl SystemBus for CpuBus<'_> {
+pub struct CpuBus<'a, const CAPTURE_ACCESS: bool> {
+	pub memory: &'a mut Memory,
+	pub vic: &'a mut VicII,
+	pub debug_access: &'a mut Option<DebugBusAccess>,
+}
+
+impl<const CAPTURE_ACCESS: bool> SystemBus for CpuBus<'_, CAPTURE_ACCESS> {
 	#[inline(always)]
 	fn read(&mut self, addr: u16, cycle: u64) -> u8 {
-		self.memory.cpu_read(addr, cycle, self.vic)
+		let value = self.memory.cpu_read(addr, cycle, self.vic);
+		if CAPTURE_ACCESS {
+			*self.debug_access = Some(DebugBusAccess { kind: DebugBusAccessKind::Read, addr, value, cycle });
+		}
+		value
 	}
 
 	#[inline(always)]
 	fn write(&mut self, addr: u16, value: u8, cycle: u64) {
 		self.memory.cpu_write(addr, value, cycle, self.vic);
+		if CAPTURE_ACCESS {
+			*self.debug_access = Some(DebugBusAccess { kind: DebugBusAccessKind::Write, addr, value, cycle });
+		}
 	}
 }
 
@@ -60,6 +86,18 @@ pub struct Motherboard {
 	drive_mode: DriveMode,
 	audio_rate_converter: AudioRateConverter,
 	pub audio_buffer_storage: Vec<f32>,
+	/* Consumed after each motherboard cycle by the optional debugger. */
+	debug_last_cpu_access: Option<DebugBusAccess>,
+}
+
+/*
+ * BA is the cartridge-port arbitration input sampled by both the processor and
+ * the REC.  The VIC-II already resolves its internal AEC timing before this
+ * value is published, so external DMA needs only the resulting BA level.
+ */
+#[derive(Clone, Copy)]
+struct BusAvailability {
+	ba_high: bool,
 }
 
 impl Motherboard {
@@ -89,6 +127,7 @@ impl Motherboard {
 				f64::from(audio_sample_rate.round().clamp(8_000.0, 192_000.0) as u32),
 			),
 			audio_buffer_storage: Vec::with_capacity(((audio_sample_rate.max(8_000.0) as usize + 49) / 50) + 64),
+			debug_last_cpu_access: None,
 		};
 		motherboard.drive_status = motherboard.drive_worker.reset();
 		motherboard
@@ -168,9 +207,10 @@ impl Motherboard {
 		self.audio_rate_converter.reset();
 		{
 			let cpu = &mut self.cpu;
-			let mut bus = CpuBus {
+			let mut bus = CpuBus::<false> {
 				memory: &mut self.memory,
 				vic: &mut self.vic,
+				debug_access: &mut self.debug_last_cpu_access,
 			};
 			cpu.reset(&mut bus);
 		}
@@ -332,9 +372,10 @@ impl Motherboard {
 		}
 	}
 
-	/* tick_base advances every device that can influence bus ownership or interrupt inputs before the CPU executes the cycle. BA governs CPU readiness, while AEC identifies whether the VIC-II actually owns the address and data buses. */
+	/* tick_base advances every device that can influence bus ownership or interrupt
+	   inputs before either the CPU or the REU is allowed to use the current cycle. */
 	#[inline(always)]
-	fn tick_base(&mut self) -> (bool, bool) {
+	fn tick_base<const REU_ENABLED: bool>(&mut self) -> BusAvailability {
 		let cycle = self.clock.total_cycles.wrapping_add(1);
 		self.clock.total_cycles = cycle;
 		self.cpu_clock_cycles = self.cpu_clock_cycles.wrapping_add(1);
@@ -348,44 +389,88 @@ impl Motherboard {
 		self.memory.cia2.update_iec_inputs(iec_clk, iec_data);
 		let tod_pulse = self.clock.advance_tod();
 		self.vic.tick_sequencer(&mut self.memory, cycle);
-		let ba_high = !self.vic.ba_low;
+		let availability = BusAvailability {
+			ba_high: !self.vic.ba_low,
+		};
 		let vic_irq = self.vic.is_irq_active();
 		self.memory.update_cpu_port_pins(pins);
 
 		let (cia_irq, cia_nmi) = tick_cia::run_cia_cycle(&mut self.memory, tod_pulse, iec_srq);
 		self.drive_cycle(cycle);
-		let irq_active = vic_irq || cia_irq || (self.memory.reu.enabled && self.memory.reu.irq_pending);
+		let irq_active = vic_irq || cia_irq || (REU_ENABLED && self.memory.reu.irq_pending);
 		if irq_active && !self.cpu.irq_line {
 			self.vic.telemetry.irq_edge_count = self.vic.telemetry.irq_edge_count.wrapping_add(1);
 		}
 		self.cpu.set_irq_line(irq_active);
 		self.cpu.set_nmi_line(!(cia_nmi || self.memory.cartridge.nmi_low));
-		(ba_high, !self.vic.aec_low)
+		availability
 	}
 
-	/* REU DMA has priority over the CPU once the VIC-II leaves the bus available; SID clocking remains tied to every motherboard cycle regardless of CPU ownership. */
+	/*
+	 * An active REU keeps the processor stopped for the complete DMA command.
+	 * The REC advances only while the cartridge-port BA signal is high; a VIC-II
+	 * request pauses the transfer from the first warning cycle and never lets the
+	 * processor run in the gap.
+	 */
+	/*
+	 * Access capture is selected as a const generic so the normal execution path
+	 * contains no debugger bookkeeping at all.  The compiler removes both the
+	 * conditional and the transaction construction when CAPTURE_ACCESS is false,
+	 * which preserves warp throughput while retaining cycle-accurate watchpoints
+	 * whenever the interactive debugger owns execution.
+	 */
+	/*
+	 * REU participation is selected before entering the frame loop.  When the
+	 * expansion is disabled the REU_ENABLED=false instantiation contains no DMA
+	 * arbitration call and no REU IRQ test.  This keeps an optional peripheral out
+	 * of the production hot path rather than paying for its absence once per C64
+	 * cycle.
+	 */
 	#[inline(always)]
-	pub fn tick_cycle(&mut self) {
-		let (ba_high, aec_high) = self.tick_base();
-		if !self.memory.run_reu_cycle(aec_high) {
+	fn tick_cycle_with_access_capture<const CAPTURE_ACCESS: bool, const REU_ENABLED: bool>(&mut self) {
+		let availability = self.tick_base::<REU_ENABLED>();
+		let cycle = self.clock.total_cycles;
+		let reu_owns_cycle = REU_ENABLED && self.memory.run_reu_cycle(availability.ba_high, cycle, &mut self.vic);
+		if !reu_owns_cycle {
 			let cpu = &mut self.cpu;
-			let mut bus = CpuBus { memory: &mut self.memory, vic: &mut self.vic };
-			cpu.tick(&mut bus, ba_high);
+			let mut bus = CpuBus::<CAPTURE_ACCESS> { memory: &mut self.memory, vic: &mut self.vic, debug_access: &mut self.debug_last_cpu_access };
+			cpu.tick(&mut bus, availability.ba_high);
 		}
 		self.render_sid_cycle();
 	}
 
+	#[inline(always)]
+	pub fn tick_cycle(&mut self) {
+		self.tick_cycle_with_access_capture::<false, false>();
+	}
+
+	#[inline(always)]
+	pub fn tick_cycle_reu(&mut self) {
+		self.tick_cycle_with_access_capture::<false, true>();
+	}
+
+	#[inline(always)]
+	pub fn tick_cycle_debugger(&mut self) {
+		self.tick_cycle_with_access_capture::<true, false>();
+	}
+
+	#[inline(always)]
+	pub fn tick_cycle_debugger_reu(&mut self) {
+		self.tick_cycle_with_access_capture::<true, true>();
+	}
+
 	#[cold]
-	pub fn tick_cycle_c128_debug(&mut self) {
-		let (ba_high, aec_high) = self.tick_base();
+	fn tick_cycle_c128_debug_with_access_capture<const CAPTURE_ACCESS: bool, const REU_ENABLED: bool>(&mut self) {
+		let availability = self.tick_base::<REU_ENABLED>();
 		let allow_2mhz = self.memory.c128_8502_control & 1 != 0 && self.vic.c128_2mhz_allowed();
 		if allow_2mhz {
 			self.cpu_clock_cycles = self.cpu_clock_cycles.wrapping_add(1);
 		}
-		if !self.memory.run_reu_cycle(aec_high) {
+		let reu_owns_cycle = REU_ENABLED && self.memory.run_reu_cycle(availability.ba_high, self.clock.total_cycles, &mut self.vic);
+		if !reu_owns_cycle {
 			let cpu = &mut self.cpu;
-			let mut bus = CpuBus { memory: &mut self.memory, vic: &mut self.vic };
-			cpu.tick(&mut bus, ba_high);
+			let mut bus = CpuBus::<CAPTURE_ACCESS> { memory: &mut self.memory, vic: &mut self.vic, debug_access: &mut self.debug_last_cpu_access };
+			cpu.tick(&mut bus, availability.ba_high);
 			if allow_2mhz {
 				let pins = cpu.port.get_pins();
 				bus.memory.update_cpu_port_pins(pins);
@@ -393,6 +478,33 @@ impl Motherboard {
 			}
 		}
 		self.render_sid_cycle();
+	}
+
+	#[cold]
+	pub fn tick_cycle_c128_debug(&mut self) {
+		self.tick_cycle_c128_debug_with_access_capture::<false, false>();
+	}
+
+	#[cold]
+	pub fn tick_cycle_c128_debug_reu(&mut self) {
+		self.tick_cycle_c128_debug_with_access_capture::<false, true>();
+	}
+
+	#[cold]
+	pub fn tick_cycle_c128_debugger(&mut self) {
+		self.tick_cycle_c128_debug_with_access_capture::<true, false>();
+	}
+
+	#[cold]
+	pub fn tick_cycle_c128_debugger_reu(&mut self) {
+		self.tick_cycle_c128_debug_with_access_capture::<true, true>();
+	}
+
+	/* Taking, rather than copying indefinitely, gives every bus access one clear
+	 * observation point and prevents a stale transaction from retriggering a
+	 * watchpoint on a later cycle in which the CPU did not own the bus. */
+	pub fn take_debug_bus_access(&mut self) -> Option<DebugBusAccess> {
+		self.debug_last_cpu_access.take()
 	}
 
 	pub fn set_c128_debug_enabled(&mut self, enabled: bool) {

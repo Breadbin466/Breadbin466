@@ -230,7 +230,7 @@ pub struct MenuIds {
 	pub show_debug_menu: String,
 	pub debug_mute_warp: String,
 	pub debug_mute_global: String,
-	pub debug_reu_1764: String,
+	pub reu_1764_512k: String,
 	pub debug_c128_2mhz: String,
 	pub rom_char: String,
 	pub rom_basic: String,
@@ -286,7 +286,7 @@ impl MenuIds {
 			show_debug_menu: "view_show_debug".into(),
 			debug_mute_warp: "dbg_mute_warp".into(),
 			debug_mute_global: "dbg_mute_global".into(),
-			debug_reu_1764: "dbg_reu_1764".into(),
+			reu_1764_512k: "reu_1764_512k".into(),
 			debug_c128_2mhz: "dbg_c128_2mhz".into(),
 			rom_char: "dbg_rom_char".into(),
 			rom_basic: "dbg_rom_basic".into(),
@@ -389,13 +389,19 @@ impl MenuManager {
 	}
 
 	pub fn set_radio_selection(&self, active_id: &str, group_ids: &[&str]) {
-		if let Ok(mut model) = self.model.write() {
-			for id in group_ids {
-				model.set_checked(id, *id == active_id);
+		let changed = self.model.write().map(|mut model| {
+			group_ids.iter().fold(false, |changed, id| {
+				model.set_checked(id, *id == active_id) || changed
+			})
+		}).unwrap_or(false);
+
+		/* Native menu reconstruction is avoided while a resize continues within
+		 * the same preset state. This matters during free window dragging, where
+		 * many resize notifications may arrive without changing any check mark. */
+		if changed {
+			if let Ok(mut platform) = self.platform.lock() {
+				let _ = platform.refresh();
 			}
-		}
-		if let Ok(mut platform) = self.platform.lock() {
-			let _ = platform.refresh();
 		}
 	}
 
@@ -479,13 +485,15 @@ impl MenuManager {
 		section
 	}
 
-	/* Computer actions group program loading, resets, pause and joystick routing because they operate on the running C64 rather than one peripheral. */
+	/* Computer actions group machine reset, expansion hardware, pause and joystick routing because they alter the running C64 as a whole. */
 	fn build_computer_section(ids: &MenuIds) -> MenuSection {
 		let mut section = MenuSection::new("computer", "Computer");
 		section.entries.push(Self::action(&ids.soft_reset, "Soft Reset", true, Some(MenuShortcut::command_shift(MenuKey::R))));
 		section.entries.push(Self::action(&ids.reset, "Hard Reset", true, Some(MenuShortcut::command(MenuKey::R))));
 		section.entries.push(MenuEntry::Separator);
 		section.entries.push(Self::action(&ids.cycle_joystick, "Cycle Joystick", true, Some(MenuShortcut::command(MenuKey::J))));
+		section.entries.push(MenuEntry::Separator);
+		section.entries.push(Self::check(&ids.reu_1764_512k, "Enable Commodore 1764 REU (512 KB)", true, false, None));
 		section.entries.push(MenuEntry::Separator);
 		section.entries.push(Self::check(&ids.pause, "Pause", true, false, Some(MenuShortcut::command(MenuKey::P))));
 		#[cfg(target_os = "windows")]
@@ -578,7 +586,6 @@ impl MenuManager {
 		section.entries.push(Self::check(&ids.debug_mute_warp, "Mute SID during Warp", true, true, None));
 		section.entries.push(Self::check(&ids.debug_mute_global, "Mute Audio", true, false, None));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.debug_reu_1764, "Enable Commodore 1764 REU (512 KB)", true, false, None));
 		section.entries.push(Self::check(&ids.debug_c128_2mhz, "Use 8502 (CPU selectable 2 MHz Mode)", true, false, None));
 		section.entries.push(MenuEntry::Separator);
 		section.entries.push(Self::check(&ids.warp_mode, "Warp Mode", true, false, Some(MenuShortcut::command(MenuKey::W))));

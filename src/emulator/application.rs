@@ -103,14 +103,14 @@ impl ApplicationHandler for Breadbin {
 					application.exit();
 				}
 			}
+			/* Resize events are normalised by Orchestrator before renderer reconfiguration,
+			 * so every platform receives the same locked presentation ratio. */
 			WindowEvent::Resized(size) => {
 				o.handle_resize(size.width, size.height);
-				o.update_cursor_visibility();
 			}
 			WindowEvent::ScaleFactorChanged { .. } => {
 				let size = o.context.window.inner_size();
 				o.handle_resize(size.width, size.height);
-				o.update_cursor_visibility();
 			}
 			#[cfg(any(target_os = "windows", target_os = "linux"))]
 			WindowEvent::ModifiersChanged(modifiers) => {
@@ -162,9 +162,6 @@ impl ApplicationHandler for Breadbin {
 					o.handle_input_event(key_code, key_event.state);
 				}
 			}
-			WindowEvent::CursorEntered { .. } => {
-				o.update_cursor_visibility();
-			}
 			WindowEvent::CursorMoved { position, .. } => {
 				o.handle_cursor_moved(position.x, position.y);
 			}
@@ -201,7 +198,6 @@ impl ApplicationHandler for Breadbin {
 		if let Some(o) = self.orchestrator.as_mut() {
 			o.context.menu.pump();
 			o.update();
-			o.update_cursor_visibility();
 
 			if o.inspector_requested {
 				o.inspector_requested = false;

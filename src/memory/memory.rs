@@ -13,7 +13,7 @@ use crate::cartridge::Cartridge;
 use crate::cia::{Cia1, Cia2};
 use crate::iec::IecBus;
 use crate::pla::cpu_map::{build_read_page_map, build_write_selection_map, CpuWriteSelection};
-use crate::reu::{Reu, ReuC64Access};
+use crate::reu::{Reu, ReuBusAction};
 use crate::sid::Mos6581;
 use crate::vic::VicII;
 use std::path::{Path, PathBuf};
@@ -58,7 +58,7 @@ impl Memory {
 		let read_map = build_read_page_map(initial_port, initial_game, initial_exrom);
 		let write_map = build_write_selection_map(initial_port, initial_game, initial_exrom);
 		Self {
-			ram: RAMController::new_with_deterministic_power_on_pattern(0xDEADBEEF),
+			ram: RAMController::new(),
 			rom: ROMStorage::new(),
 			color_ram: ColorRAM::new(),
 			cartridge,
@@ -152,21 +152,28 @@ impl Memory {
 		self.sid.tick()
 	}
 
-	/* REU DMA owns the physical C64 DRAM bus. It yields only while VIC-II AEC is low;
-	   BA is an advance warning for the CPU and does not itself remove the bus. Cartridge
-	   ROM, system ROM, I/O and Color RAM do not replace the underlying 64 KiB DRAM. */
+	/*
+	 * REU DMA keeps the processor stopped for the complete command.  BA decides
+	 * whether the current one-megahertz phase advances the REC or is consumed by
+	 * VIC-II arbitration.  A paused phase still returns true so the motherboard
+	 * never lets the CPU execute in the middle of an active command.
+	 *
+	 * The controller drives ordinary C64 addresses.  Reads and writes therefore
+	 * use the normal PLA and device dispatch.  Temporarily moving the REU out of
+	 * Memory prevents its own I/O2 decoder from recursively answering a DMA access.
+	 */
 	#[inline(always)]
-	pub fn run_reu_cycle(&mut self, aec_high: bool) -> bool {
-		if !self.reu.dma_active() {
-			return false;
+	pub fn run_reu_cycle(&mut self, ba_high: bool, cycle: u64, vic: &mut VicII) -> bool {
+		match self.reu.bus_action(ba_high) {
+			ReuBusAction::Cpu => false,
+			ReuBusAction::Hold => true,
+			ReuBusAction::Transfer => {
+				let mut reu = std::mem::take(&mut self.reu);
+				reu.tick_dma(self, cycle, vic);
+				self.reu = reu;
+				true
+			}
 		}
-
-		if !matches!(self.reu.c64_access(), ReuC64Access::None) && !aec_high {
-			return true;
-		}
-
-		self.reu.tick_dma(&mut self.ram);
-		true
 	}
 
 	/* A CPU read resolves one PLA-selected source, applies device side effects, then refreshes the shared data-bus latch with the value actually observed. Colour RAM contributes only its low nibble; unmapped and unclaimed cartridge reads retain the floating bus. */
@@ -198,14 +205,13 @@ impl Memory {
 					if self.c128_2mhz_debug_enabled { self.c128_adjust_cia_read(addr, value, vic) } else { value }
 				}
 				0xDE00..=0xDFFF => {
-					let floating = if self.c128_2mhz_debug_enabled { 0xFF } else { self.bus_state.get_floating(cycle) };
-					let cartridge_value = self.cartridge.read_io_bus(addr, cycle).resolve(floating);
-					self.capture_cartridge_map_change();
-					if self.reu.enabled && (0xDF00..=0xDFFF).contains(&addr) {
-						let reu_value = self.reu.read(addr);
-						cartridge_value.map_or(reu_value, |value| value & reu_value)
+					if self.reu.enabled && addr >= 0xDF00 && addr <= 0xDF0A {
+						self.reu.read(addr)
 					} else {
-						cartridge_value.unwrap_or(floating)
+						let floating = if self.c128_2mhz_debug_enabled { 0xFF } else { self.bus_state.get_floating(cycle) };
+						let value = self.cartridge.read_io_bus(addr, cycle).resolve(floating).unwrap_or(floating);
+						self.capture_cartridge_map_change();
+						value
 					}
 				}
 				_ => if self.c128_2mhz_debug_enabled { 0xFF } else { self.bus_state.get_floating(cycle) },
@@ -260,11 +266,12 @@ impl Memory {
 				0xDC00..=0xDCFF => self.cia1.write(addr, value),
 				0xDD00..=0xDDFF => self.cia2.write(addr, value, cycle),
 				0xDE00..=0xDFFF => {
-					self.cartridge.write_io(addr, value, cycle);
-					self.capture_cartridge_map_change();
-					self.sync_memory_map(self.last_cpu_port_pins);
-					if self.reu.enabled && (0xDF00..=0xDFFF).contains(&addr) {
+					if self.reu.enabled && addr >= 0xDF00 && addr <= 0xDF0A {
 						self.reu.write(addr, value);
+					} else {
+						self.cartridge.write_io(addr, value, cycle);
+						self.capture_cartridge_map_change();
+						self.sync_memory_map(self.last_cpu_port_pins);
 					}
 				}
 				_ => {}
@@ -292,6 +299,39 @@ impl Memory {
 		value
 	}
 
+	/*
+	 * Debugger memory inspection is intentionally distinct from an emulated CPU
+	 * access. It follows the current PLA-visible map but suppresses destructive
+	 * register reads, flash status progression and cartridge line transitions.
+	 * The separate physical-RAM accessor lets the debugger inspect storage hidden
+	 * beneath ROM or I/O without pretending that the CPU could currently see it.
+	 */
+	pub fn debug_region(&self, addr: u16) -> MapRegion {
+		self.read_map[(addr >> 8) as usize]
+	}
+
+	pub fn debug_peek(&self, addr: u16, cycle: u64, _vic: &VicII) -> u8 {
+		match self.debug_region(addr) {
+			MapRegion::Ram => self.ram.read(addr),
+			MapRegion::Basic => self.rom.read_basic(addr - BASIC_ROM_START),
+			MapRegion::Kernal => self.rom.read_kernal(addr - KERNAL_ROM_START),
+			MapRegion::Char => self.rom.read_char((addr - CHAR_ROM_START) & 0x0FFF),
+			MapRegion::ColorRam => self.color_ram.read_low_nibble(addr),
+			MapRegion::Io => match addr {
+				0xD000..=0xD3FF => 0xFF,
+				0xD400..=0xD7FF => 0xFF,
+				0xDC00..=0xDCFF => self.cia1.peek(addr),
+				0xDD00..=0xDDFF => self.cia2.peek(addr),
+				0xDF00..=0xDF0A if self.reu.enabled => self.reu.debug_register((addr & 0x0F) as usize),
+				0xDE00..=0xDFFF => self.cartridge.debug_peek_io(addr, cycle).unwrap_or(0xFF),
+				_ => 0xFF,
+			},
+			MapRegion::RomL => self.cartridge.debug_peek_roml(addr & 0x1FFF, cycle).unwrap_or(0xFF),
+			MapRegion::RomH => self.cartridge.debug_peek_romh(addr & 0x1FFF, cycle).unwrap_or(0xFF),
+			MapRegion::Floating | MapRegion::Ultimax => 0xFF,
+		}
+	}
+
 	#[inline(always)]
 	pub fn read_ram(&self, addr: u16) -> u8 { self.ram.read(addr) }
 	#[inline(always)]
@@ -303,7 +343,7 @@ impl Memory {
 		self.cartridge.save_associated_nvram();
 		self.reu.reset(hard_reset);
 		if hard_reset {
-			self.ram = RAMController::new_with_deterministic_power_on_pattern(0xDEADBEEF);
+			self.ram.clear();
 			self.color_ram.clear();
 			self.cartridge.reset();
 		}

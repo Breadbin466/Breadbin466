@@ -204,6 +204,27 @@ impl Cartridge {
 		value
 	}
 
+	/*
+	 * Debugger inspection must observe the currently selected cartridge bytes
+	 * without advancing flash command state, changing a bank latch or publishing
+	 * new GAME/EXROM levels. These three accessors therefore use the mapper's
+	 * side-effect-free peek path and deliberately avoid sync_configuration().
+	 */
+	#[inline(always)]
+	pub fn debug_peek_roml(&self, addr: u16, cycle: u64) -> Option<u8> {
+		if self.present { self.mapper.peek_roml(addr, cycle) } else { None }
+	}
+
+	#[inline(always)]
+	pub fn debug_peek_romh(&self, addr: u16, cycle: u64) -> Option<u8> {
+		if self.present { self.mapper.peek_romh(addr, cycle) } else { None }
+	}
+
+	#[inline(always)]
+	pub fn debug_peek_io(&self, addr: u16, cycle: u64) -> Option<u8> {
+		if self.present { self.mapper.peek_io(addr, cycle) } else { None }
+	}
+
 	#[inline(always)]
 	pub fn read_romh(&mut self, addr: u16, cycle: u64) -> Option<u8> {
 		if !self.present {

@@ -116,3 +116,21 @@ publisher = "Christian Bauer"
 date = "1996-08-28"
 url = "https://www.cebix.net/VIC-Article.txt"
 archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+
+[[source]]
+id = "CSG-8726-TECHREF-2008"
+title = "CSG 8726R1 Technical Reference"
+author = "Wolfgang Moser"
+publisher = "cbm-hackers / FUNET archive"
+date = "2008-08"
+url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/CSG8726TechRefDoc-1.0.zip"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+
+[[source]]
+id = "REU-REGISTERS-MAKELA"
+title = "REU Registers"
+author = "Marko Mäkelä"
+publisher = "Codebase64"
+date = "unknown"
+url = "https://codebase64.c64.org/doku.php?id=base:reu_registers"
+archive_url = "https://codebase64.c64.org/"
