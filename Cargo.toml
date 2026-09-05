@@ -3,7 +3,7 @@ cargo-features = ["trim-paths"]
 
 [package]
 name = "Breadbin466"
-version = "0.11.1"
+version = "0.12.0"
 edition = "2024"
 
 # The shared dependency set covers audio, input, windowing, rendering, image I/O,
@@ -19,22 +19,34 @@ png = "0.18"
 rfd = "0.17.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+lzma-rust2 = { version = "0.18", default-features = false, features = ["std", "encoder"] }
+sha2 = "0.10"
 
 # Native menu and application integration are selected per target so that platform
 # concerns remain outside the emulation core.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", features = ["NSObject", "NSString", "NSDictionary", "NSAttributedString"] }
-objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSMenu", "NSMenuItem", "NSEvent", "NSCell", "NSAttributedString"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSAlert", "NSApplication", "NSButton", "NSButtonCell", "NSMenu", "NSMenuItem", "NSEvent", "NSCell", "NSControl", "NSOpenPanel", "NSPopUpButton", "NSResponder", "NSSavePanel", "NSTextField", "NSView", "NSWindow", "NSAttributedString"] }
+dispatch2 = "0.3.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 raw-window-handle = "0.6.2"
-windows = { version = "0.61", features = [
+wfd = "0.1.8"
+windows = { version = "=0.62.2", features = [
 	"Win32_Foundation",
-	"Win32_UI_WindowsAndMessaging",
 	"Win32_Graphics_Gdi",
 	"Win32_System_LibraryLoader",
 	"Win32_UI_HiDpi",
+	"Win32_UI_WindowsAndMessaging",
+] }
+windows-sys = { version = "0.61.2", features = [
+	"Win32_Foundation",
+	"Win32_Graphics_Gdi",
+	"Win32_System_LibraryLoader",
+	"Win32_UI_HiDpi",
+	"Win32_UI_Controls",
+	"Win32_UI_WindowsAndMessaging",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -60,7 +72,7 @@ trim-paths = "all"
 [package.metadata.bundle]
 name = "Breadbin466"
 identifier = "com.foursixsix.breadbin466"
-version = "0.11.1"
+version = "0.12.0"
 copyright = "Copyright © 2025–2026 The Breadbin466 Team"
 category = "public.app-category.entertainment"
 short_description = "C64 Emulator"

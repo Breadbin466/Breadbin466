@@ -2,7 +2,10 @@
 // src/iec/bus.rs — IEC Serial Bus wired-OR logic (+ SRQ line)
 // =======================================================
 
-use crate::iec::constants::{HOST_ATN, HOST_CLK, HOST_DATA, HOST_SRQ, DEVICE_ATN, DEVICE_CLK, DEVICE_DATA, DEVICE_SRQ, DEVICE_ATNA, DEVICE_ATN_ACK, DEVICE_CONNECTED, HOST_PULLS, DEVICE_STATE, INITIAL_STATE};
+use crate::iec::constants::{
+	DEVICE_ATN, DEVICE_ATN_ACK, DEVICE_ATNA, DEVICE_CLK, DEVICE_CONNECTED, DEVICE_DATA, DEVICE_SRQ,
+	DEVICE_STATE, HOST_ATN, HOST_CLK, HOST_DATA, HOST_PULLS, HOST_SRQ, INITIAL_STATE,
+};
 use std::cell::Cell;
 
 /* The bus stores each participant's pull-down requests separately and resolves the visible lines afterwards. A released line is high only when neither host nor connected device pulls it low; the 1541 ATN acknowledge circuit can additionally pull DATA low from the relationship between ATN and ATNA. */
@@ -19,11 +22,7 @@ fn bit(state: u32, mask: u32) -> bool {
 
 #[inline(always)]
 fn with_bit(state: u32, mask: u32, value: bool) -> u32 {
-	if value {
-		state | mask
-	} else {
-		state & !mask
-	}
+	if value { state | mask } else { state & !mask }
 }
 
 #[inline(always)]
@@ -43,9 +42,7 @@ fn line_clk(state: u32) -> bool {
 
 #[inline(always)]
 fn ack_pull(state: u32) -> bool {
-	connected(state)
-		&& bit(state, DEVICE_ATN_ACK)
-		&& (bit(state, DEVICE_ATNA) ^ !line_atn(state))
+	connected(state) && bit(state, DEVICE_ATN_ACK) && (bit(state, DEVICE_ATNA) ^ !line_atn(state))
 }
 
 #[inline(always)]
@@ -104,10 +101,12 @@ impl IecBus {
 	fn track(&self, old: u32, new: u32, cycle: u64, activity: Activity) {
 		match activity {
 			Activity::Host => {
-				self.host_activity.set(self.host_activity.get().wrapping_add(1));
+				self.host_activity
+					.set(self.host_activity.get().wrapping_add(1));
 			}
 			Activity::Device => {
-				self.device_activity.set(self.device_activity.get().wrapping_add(1));
+				self.device_activity
+					.set(self.device_activity.get().wrapping_add(1));
 			}
 		}
 		if line_atn(old) != line_atn(new) {
@@ -152,7 +151,14 @@ impl IecBus {
 
 	/* The drive supplies its CLK and DATA pull-downs together with the ATNA state and the enable for the discrete ATN acknowledge path. Disconnected devices cannot influence the cable. */
 	#[inline(always)]
-	pub fn set_device_lines(&self, clk: bool, data: bool, atna: bool, atna_output: bool, cycle: u64) {
+	pub fn set_device_lines(
+		&self,
+		clk: bool,
+		data: bool,
+		atna: bool,
+		atna_output: bool,
+		cycle: u64,
+	) {
 		if !connected(self.load()) {
 			return;
 		}
@@ -174,11 +180,7 @@ impl IecBus {
 				return state;
 			}
 			let next = with_bit(state, DEVICE_CONNECTED, connect);
-			if connect {
-				next
-			} else {
-				next & !DEVICE_STATE
-			}
+			if connect { next } else { next & !DEVICE_STATE }
 		});
 	}
 
@@ -201,7 +203,12 @@ impl IecBus {
 	#[inline(always)]
 	pub fn lines(&self) -> (bool, bool, bool, bool) {
 		let state = self.load();
-		(line_atn(state), line_clk(state), line_data(state), line_srq(state))
+		(
+			line_atn(state),
+			line_clk(state),
+			line_data(state),
+			line_srq(state),
+		)
 	}
 
 	pub fn last_atn_transition(&self) -> u64 {
@@ -251,7 +258,9 @@ impl IecBus {
 
 	pub fn set_host_state(&self, host: u32, cycle: u64) {
 		let bits = host & (HOST_PULLS | HOST_SRQ);
-		self.commit(cycle, Activity::Host, |state| (state & !(HOST_PULLS | HOST_SRQ)) | bits);
+		self.commit(cycle, Activity::Host, |state| {
+			(state & !(HOST_PULLS | HOST_SRQ)) | bits
+		});
 	}
 
 	pub fn set_device_state(&self, device: u32, cycle: u64) {

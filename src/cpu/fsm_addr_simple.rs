@@ -8,7 +8,6 @@ use crate::cpu::decoder::{OpcodeInfo, Operation};
 
 /* Each method below is a bus-cycle state machine. Reads marked as dummy remain externally visible and can trigger memory-mapped side effects even though their values are discarded (MOS-6500-HARDWARE-1976, single-cycle execution tables). */
 impl Cpu {
-
 	/* Implied and accumulator instructions perform a second opcode-stream read while the internal register operation completes. CLI and SEI record the old I state because interrupt recognition does not simply follow the newly written flag. */
 	pub fn execute_implied<B: SystemBus>(&mut self, bus: &mut B, info: &OpcodeInfo) {
 		match self.t_state {
@@ -16,7 +15,7 @@ impl Cpu {
 				let _ = self.read_byte(bus, self.pc, true);
 
 				match info.op {
-					Operation::NOP => {},
+					Operation::NOP => {}
 					Operation::CLC => self.p &= !super::C_FLAG,
 					Operation::SEC => self.p |= super::C_FLAG,
 					Operation::CLI => {
@@ -24,26 +23,55 @@ impl Cpu {
 							self.irq_enables = true;
 						}
 						self.p &= !super::I_FLAG;
-					},
+					}
 					Operation::SEI => {
 						if (self.p & super::I_FLAG) == 0 {
 							self.irq_disables = true;
 						}
 						self.p |= super::I_FLAG;
-					},
+					}
 					Operation::CLV => self.p &= !super::V_FLAG,
 					Operation::CLD => self.p &= !super::D_FLAG,
 					Operation::SED => self.p |= super::D_FLAG,
-					Operation::TAX => { self.x = self.a; self.update_nz(self.x); },
-					Operation::TAY => { self.y = self.a; self.update_nz(self.y); },
-					Operation::TXA => { self.a = self.x; self.update_nz(self.a); },
-					Operation::TYA => { self.a = self.y; self.update_nz(self.a); },
-					Operation::TSX => { self.x = self.sp; self.update_nz(self.x); },
-					Operation::TXS => { self.sp = self.x; },
-					Operation::DEX => { self.x = self.x.wrapping_sub(1); self.update_nz(self.x); },
-					Operation::DEY => { self.y = self.y.wrapping_sub(1); self.update_nz(self.y); },
-					Operation::INX => { self.x = self.x.wrapping_add(1); self.update_nz(self.x); },
-					Operation::INY => { self.y = self.y.wrapping_add(1); self.update_nz(self.y); },
+					Operation::TAX => {
+						self.x = self.a;
+						self.update_nz(self.x);
+					}
+					Operation::TAY => {
+						self.y = self.a;
+						self.update_nz(self.y);
+					}
+					Operation::TXA => {
+						self.a = self.x;
+						self.update_nz(self.a);
+					}
+					Operation::TYA => {
+						self.a = self.y;
+						self.update_nz(self.a);
+					}
+					Operation::TSX => {
+						self.x = self.sp;
+						self.update_nz(self.x);
+					}
+					Operation::TXS => {
+						self.sp = self.x;
+					}
+					Operation::DEX => {
+						self.x = self.x.wrapping_sub(1);
+						self.update_nz(self.x);
+					}
+					Operation::DEY => {
+						self.y = self.y.wrapping_sub(1);
+						self.update_nz(self.y);
+					}
+					Operation::INX => {
+						self.x = self.x.wrapping_add(1);
+						self.update_nz(self.x);
+					}
+					Operation::INY => {
+						self.y = self.y.wrapping_add(1);
+						self.update_nz(self.y);
+					}
 					Operation::ASL => self.a = self.alu_asl(self.a),
 					Operation::LSR => self.a = self.alu_lsr(self.a),
 					Operation::ROL => self.a = self.alu_rol(self.a),
@@ -52,7 +80,7 @@ impl Cpu {
 				}
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -94,7 +122,7 @@ impl Cpu {
 				super::op_rmw::rmw_phase_modify_write(self, bus, self.ir);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -132,7 +160,7 @@ impl Cpu {
 				super::op_rmw::rmw_phase_modify_write(self, bus, self.ir);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -183,7 +211,7 @@ impl Cpu {
 				self.pc = self.pointer;
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 }

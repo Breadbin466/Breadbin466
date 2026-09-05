@@ -32,7 +32,10 @@ pub fn encode_group(input: &[u8; 4]) -> [u8; 5] {
 }
 
 fn gcr_decode(code: u8) -> Option<u8> {
-	GCR_ENCODE.iter().position(|&entry| entry == code).map(|value| value as u8)
+	GCR_ENCODE
+		.iter()
+		.position(|&entry| entry == code)
+		.map(|value| value as u8)
 }
 
 /* Decoding rejects symbols absent from the Commodore 4-to-5 table instead of silently manufacturing sector data. */
@@ -184,6 +187,19 @@ fn bit_at(track: &[u8], bit_index: usize) -> u8 {
 	(byte >> shift) & 1
 }
 
+fn write_bit(track: &mut [u8], bit_index: usize, value: u8) {
+	let total_bits = track.len() * 8;
+	let wrapped = bit_index % total_bits;
+	let byte_index = wrapped / 8;
+	let shift = 7 - (wrapped % 8);
+	let mask = 1u8 << shift;
+	if value & 1 != 0 {
+		track[byte_index] |= mask;
+	} else {
+		track[byte_index] &= !mask;
+	}
+}
+
 fn read_circular_bytes(track: &[u8], start_bit: usize, length: usize) -> Vec<u8> {
 	let mut output = vec![0u8; length];
 
@@ -196,6 +212,15 @@ fn read_circular_bytes(track: &[u8], start_bit: usize, length: usize) -> Vec<u8>
 	}
 
 	output
+}
+
+fn write_circular_bytes(track: &mut [u8], start_bit: usize, bytes: &[u8]) {
+	for (byte_index, &byte) in bytes.iter().enumerate() {
+		for bit in 0..8 {
+			let value = (byte >> (7 - bit)) & 1;
+			write_bit(track, start_bit + byte_index * 8 + bit, value);
+		}
+	}
 }
 
 fn find_sync_end(track: &[u8], start_bit: usize, limit_bits: usize) -> Option<usize> {
@@ -220,23 +245,25 @@ fn find_sync_end(track: &[u8], start_bit: usize, limit_bits: usize) -> Option<us
 	None
 }
 
-/* Decoding searches the circular bitstream for sync and validates headers, checksums and sector identity instead of assuming byte-aligned canonical tracks. */
-/* Decoding begins at an arbitrary bit position and walks the circular track, allowing sector recovery without assuming a physical index hole. */
-pub fn decode_track_from(
-	track: &[u8],
-	track_num: u8,
-	start_bit: usize,
-) -> Option<Vec<Option<[u8; 256]>>> {
+#[derive(Clone, Copy)]
+struct SectorRecord {
+	sector: usize,
+	data_start_bit: usize,
+	data: [u8; 256],
+}
+
+/* Sector discovery records physical data-block positions as well as decoded payloads. The positions are required by Reclaim Space so it can replace one sector payload without rebuilding or normalising the surrounding track. */
+fn scan_sector_records(track: &[u8], track_num: u8, start_bit: usize) -> Vec<SectorRecord> {
 	if track.is_empty() {
-		return None;
+		return Vec::new();
 	}
 
 	let total_bits = track.len() * 8;
 	let count = sectors_per_track(track_num) as usize;
-	let mut sectors = vec![None; count];
 	let scan_start = start_bit % total_bits;
 	let scan_end = scan_start + total_bits;
 	let mut scan_bit = scan_start;
+	let mut records = Vec::new();
 
 	while scan_bit < scan_end {
 		let Some(header_start) = find_sync_end(track, scan_bit, scan_end + 16 - scan_bit) else {
@@ -299,14 +326,110 @@ pub fn decode_track_from(
 
 		let mut data = [0u8; 256];
 		data.copy_from_slice(&block[1..257]);
-		sectors[sector] = Some(data);
-
-		if sectors.iter().all(Option::is_some) {
-			break;
-		}
-
+		records.push(SectorRecord {
+			sector,
+			data_start_bit: data_start,
+			data,
+		});
 		scan_bit = data_start + 325 * 8;
 	}
 
+	records
+}
+
+fn encoded_data_block(data: &[u8; 256]) -> Vec<u8> {
+	let mut block = [0u8; 260];
+	block[0] = 0x07;
+	block[1..257].copy_from_slice(data);
+	block[257] = data.iter().fold(0u8, |checksum, byte| checksum ^ byte);
+	let mut encoded = Vec::with_capacity(325);
+	append_gcr(&mut encoded, &block);
+	encoded
+}
+
+/* A G64 track represents one circular revolution. Reclaiming therefore requires exactly one valid occurrence of the requested DOS sector; duplicate or ambiguous records are retained rather than guessed at. */
+pub(crate) fn decode_sector_unique(track: &[u8], track_num: u8, sector: u8) -> Option<[u8; 256]> {
+	let mut matches = scan_sector_records(track, track_num, 0)
+		.into_iter()
+		.filter(|record| record.sector == usize::from(sector));
+	let first = matches.next()?;
+	matches.next().is_none().then_some(first.data)
+}
+
+pub(crate) fn replace_sector_data_unique(
+	track: &mut [u8],
+	track_num: u8,
+	sector: u8,
+	data: &[u8; 256],
+) -> bool {
+	let positions: Vec<usize> = scan_sector_records(track, track_num, 0)
+		.into_iter()
+		.filter(|record| record.sector == usize::from(sector))
+		.map(|record| record.data_start_bit)
+		.collect();
+	if positions.len() != 1 {
+		return false;
+	}
+	let encoded = encoded_data_block(data);
+	write_circular_bytes(track, positions[0], &encoded);
+	true
+}
+
+/* NIB capture blocks commonly contain more than one revolution. Multiple copies of a sector are acceptable only when every valid copy agrees on its current payload; all copies are then changed together so the untouched capture remains internally consistent. */
+pub(crate) fn decode_sector_consistent(
+	track: &[u8],
+	track_num: u8,
+	sector: u8,
+) -> Option<[u8; 256]> {
+	let matches: Vec<SectorRecord> = scan_sector_records(track, track_num, 0)
+		.into_iter()
+		.filter(|record| record.sector == usize::from(sector))
+		.collect();
+	let first = matches.first()?.data;
+	matches
+		.iter()
+		.all(|record| record.data == first)
+		.then_some(first)
+}
+
+pub(crate) fn replace_sector_data_consistent(
+	track: &mut [u8],
+	track_num: u8,
+	sector: u8,
+	data: &[u8; 256],
+) -> bool {
+	let records: Vec<SectorRecord> = scan_sector_records(track, track_num, 0)
+		.into_iter()
+		.filter(|record| record.sector == usize::from(sector))
+		.collect();
+	let Some(first) = records.first() else {
+		return false;
+	};
+	if !records.iter().all(|record| record.data == first.data) {
+		return false;
+	}
+	let encoded = encoded_data_block(data);
+	for record in records {
+		write_circular_bytes(track, record.data_start_bit, &encoded);
+	}
+	true
+}
+
+/* Decoding begins at an arbitrary bit position and walks the circular track, allowing sector recovery without assuming a physical index hole. Duplicate valid sectors retain the first recovered payload; callers that require uniqueness use decode_sector_unique instead. */
+pub fn decode_track_from(
+	track: &[u8],
+	track_num: u8,
+	start_bit: usize,
+) -> Option<Vec<Option<[u8; 256]>>> {
+	if track.is_empty() {
+		return None;
+	}
+	let count = sectors_per_track(track_num) as usize;
+	let mut sectors = vec![None; count];
+	for record in scan_sector_records(track, track_num, start_bit) {
+		if sectors[record.sector].is_none() {
+			sectors[record.sector] = Some(record.data);
+		}
+	}
 	Some(sectors)
 }

@@ -1,23 +1,32 @@
 // =======================================================
-// src/sid/tables.rs — MOS 6581R4AR numeric model construction
+// src/sid/tables.rs — SID precomputed transfer tables
 // =======================================================
 
+/* Construction of precomputed numeric transfer tables used by the SID model. */
+
 use super::constants::{
-	CLOCK_FREQUENCY_HZ, ENVELOPE_DAC_BITS, FILTER_CUTOFF_COMPRESSION_POSITION,
-	FILTER_CUTOFF_COMPRESSION_SLOPE, FILTER_CUTOFF_COMPRESSION_WIDTH, FILTER_CUTOFF_FLOOR_HZ,
-	FILTER_CUTOFF_FREQUENCY_SCALE,
-	FILTER_CUTOFF_HIGH_RESONANCE_DROP,
-	FILTER_CUTOFF_OPENING_POSITION, FILTER_CUTOFF_OPENING_SLOPE, FILTER_CUTOFF_OPENING_WIDTH,
-	FILTER_OPERATING_BINS, FILTER_SUBSTEPS, SID_ANALOGUE_FEEDBACK_CONDUCTANCE,
-	FILTER_SOURCE_CUTOFF_CLOSING_END, FILTER_SOURCE_CUTOFF_CLOSING_START,
-	FILTER_SOURCE_CUTOFF_OPENING_END, FILTER_SOURCE_CUTOFF_OPENING_START,
-	FILTER_SOURCE_CUTOFF_SENSITIVITY_HZ, FILTER_SOURCE_CUTOFF_TRANSITION_WIDTH,
-	SID_ANALOGUE_INVERTER_STEEPNESS, SID_ANALOGUE_LOAD_BINS, SID_ANALOGUE_MAX_CONDUCTANCE, SID_ANALOGUE_MAX_VOLTS,
-	SID_ANALOGUE_MIN_VOLTS, SID_ANALOGUE_QUIESCENT_VOLTS, SID_ANALOGUE_SUBSTRATE_BIAS_VOLTS,
-	SID_ANALOGUE_SUBSTRATE_LEAK_CONDUCTANCE, SID_DAC_LEAKAGE, SID_DAC_TWO_R_OVER_R,
+	CLOCK_FREQUENCY_HZ, ENVELOPE_DAC_BITS, FILTER_CUTOFF_FLOOR_HZ, FILTER_CUTOFF_FREQUENCY_SCALE,
+	FILTER_CUTOFF_HIGH_RESONANCE_DROP, FILTER_CUTOFF_SATURATION_HZ, FILTER_CUTOFF_SIGMOID_CENTRE,
+	FILTER_CUTOFF_SIGMOID_WIDTH, FILTER_OPERATING_BINS, FILTER_SOURCE_CUTOFF_CLOSING_END,
+	FILTER_SOURCE_CUTOFF_CLOSING_START, FILTER_SOURCE_CUTOFF_OPENING_END,
+	FILTER_SOURCE_CUTOFF_OPENING_START, FILTER_SOURCE_CUTOFF_SENSITIVITY_HZ,
+	FILTER_SOURCE_CUTOFF_TRANSITION_WIDTH, FILTER_SUBSTEPS, SID_ANALOGUE_FEEDBACK_CONDUCTANCE,
+	SID_ANALOGUE_INVERTER_STEEPNESS, SID_ANALOGUE_LOAD_BINS, SID_ANALOGUE_MAX_CONDUCTANCE,
+	SID_ANALOGUE_MAX_VOLTS, SID_ANALOGUE_MIN_VOLTS, SID_ANALOGUE_QUIESCENT_VOLTS,
+	SID_ANALOGUE_SUBSTRATE_BIAS_VOLTS, SID_ANALOGUE_SUBSTRATE_LEAK_CONDUCTANCE, SID_DAC_LEAKAGE,
+	SID_ENVELOPE_VCA_COMPRESSION, SID_ENVELOPE_VCA_COMPRESSION_POWER, SID_FILTER_DAC_TWO_R_OVER_R,
 	SID_RESONANCE_DAMPING_CURVE, SID_RESONANCE_DAMPING_MAX, SID_RESONANCE_DAMPING_MIN,
-	SID_WAVEFORM_EQUILIBRIUM, WAVEFORM_DAC_BITS,
+	SID_VOICE_DAC_TWO_R_OVER_R, SID_WAVEFORM_DAC_BIT_WEIGHT_TRIM, SID_WAVEFORM_EQUILIBRIUM,
+	SID_WAVEFORM_FOLLOWER_COMPRESSION, SID_WAVEFORM_FOLLOWER_LIFT, WAVEFORM_DAC_BITS,
 };
+
+/* Precomputed loaded-amplifier curves used by the runtime filter path. */
+pub(super) struct TransferCurves {
+	pub(super) summer: [Box<[f32; 2049]>; 7],
+	pub(super) mixer: [Box<[f32; 2049]>; 8],
+	pub(super) volume: [Box<[f32; 2049]>; 16],
+	pub(super) summer_resting_output: [f32; 7],
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct FilterCoefficients {
@@ -27,10 +36,10 @@ pub(super) struct FilterCoefficients {
 	pub(super) damping: [f32; 16],
 	pub(super) input_drive: [f32; FILTER_OPERATING_BINS],
 	pub(super) feedback_drive: [f32; FILTER_OPERATING_BINS],
-	pub(super) g_source_gain: f32,
+	pub(super) source_gain_modulation: f32,
 }
 
-/* Solves the resistor-ladder network used by the DAC builders. Keeping the electrical solve here makes the generated transfer curves reproducible rather than embedding opaque measured tables. */
+/* Solves the resistor-ladder network used by the DAC builders. Keeping the electrical solve here makes the generated transfer curves reproducible instead of embedding opaque lookup data. */
 fn solve_tridiagonal<const N: usize>(
 	lower: &[f64; N],
 	diagonal: &[f64; N],
@@ -44,7 +53,11 @@ fn solve_tridiagonal<const N: usize>(
 	d[0] = rhs[0] / diagonal[0];
 	for index in 1..N {
 		let denominator = diagonal[index] - lower[index] * c[index - 1];
-		c[index] = if index + 1 < N { upper[index] / denominator } else { 0.0 };
+		c[index] = if index + 1 < N {
+			upper[index] / denominator
+		} else {
+			0.0
+		};
 		d[index] = (rhs[index] - lower[index] * d[index - 1]) / denominator;
 	}
 	result[N - 1] = d[N - 1];
@@ -65,54 +78,87 @@ fn ladder_weights<const N: usize>(two_r_over_r: f64, terminated: bool) -> [f64; 
 		let mut rhs = [0.0; N];
 		for node in 0..N {
 			diagonal[node] += source;
-			if node == active { rhs[node] += source; }
-			if node > 0 { lower[node] = -link; diagonal[node] += link; }
-			if node + 1 < N { upper[node] = -link; diagonal[node] += link; }
+			if node == active {
+				rhs[node] += source;
+			}
+			if node > 0 {
+				lower[node] = -link;
+				diagonal[node] += link;
+			}
+			if node + 1 < N {
+				upper[node] = -link;
+				diagonal[node] += link;
+			}
 		}
-		if terminated { diagonal[0] += source; }
+		if terminated {
+			diagonal[0] += source;
+		}
 		diagonal[N - 1] += 1.0;
 		weights[active] = solve_tridiagonal(&lower, &diagonal, &upper, &rhs)[N - 1];
 	}
 	let total: f64 = weights.iter().sum();
-	for weight in &mut weights { *weight /= total; }
+	for weight in &mut weights {
+		*weight /= total;
+	}
 	weights
 }
 
 #[inline(always)]
 fn ladder_value(code: usize, weights: &[f64], leakage: f64) -> f64 {
-	weights.iter().enumerate().map(|(bit, weight)| {
-		let level = if code & (1usize << bit) != 0 { 1.0 } else { leakage };
-		level * weight
-	}).sum()
+	weights
+		.iter()
+		.enumerate()
+		.map(|(bit, weight)| {
+			let level = if code & (1usize << bit) != 0 {
+				1.0
+			} else {
+				leakage
+			};
+			level * weight
+		})
+		.sum()
 }
 
 /* Builds the eight-bit envelope ladder response, including resistor mismatch and termination rather than assuming a perfectly linear code-to-level mapping. */
 pub(super) fn build_envelope_dac_table() -> [f32; 256] {
-	let weights = ladder_weights::<ENVELOPE_DAC_BITS>(SID_DAC_TWO_R_OVER_R, false);
+	let weights = ladder_weights::<ENVELOPE_DAC_BITS>(SID_VOICE_DAC_TWO_R_OVER_R, false);
 	let full_scale = ladder_value(255, &weights, SID_DAC_LEAKAGE);
 	std::array::from_fn(|code| {
-		(ladder_value(code, &weights, SID_DAC_LEAKAGE) / full_scale) as f32
+		let ladder = ladder_value(code, &weights, SID_DAC_LEAKAGE) / full_scale;
+		let compression = SID_ENVELOPE_VCA_COMPRESSION
+			* ladder.powf(SID_ENVELOPE_VCA_COMPRESSION_POWER)
+			* (1.0 - ladder);
+		(ladder - compression).clamp(0.0, 1.0) as f32
 	})
 }
 
 #[inline(always)]
 fn follower_response(input: f32) -> f32 {
 	let headroom = 1.0 - input;
-	let lift = 0.092 * input * headroom;
-	let compression = 0.018 * input * input * headroom;
+	let lift = SID_WAVEFORM_FOLLOWER_LIFT * input * headroom;
+	let compression = SID_WAVEFORM_FOLLOWER_COMPRESSION * input * input * headroom;
 	input + lift - compression
 }
 
 /* Builds the twelve-bit waveform ladder and source-follower response used by every voice conversion. */
 pub(super) fn build_waveform_dac_table() -> Box<[f32; 4096]> {
-	let weights = ladder_weights::<WAVEFORM_DAC_BITS>(SID_DAC_TWO_R_OVER_R, false);
+	let mut weights = ladder_weights::<WAVEFORM_DAC_BITS>(SID_VOICE_DAC_TWO_R_OVER_R, false);
+	for (weight, trim) in weights.iter_mut().zip(SID_WAVEFORM_DAC_BIT_WEIGHT_TRIM) {
+		*weight *= trim;
+	}
+	let weight_sum: f64 = weights.iter().sum();
+	for weight in &mut weights {
+		*weight /= weight_sum;
+	}
 	let mut table = Box::new([0.0; 4096]);
 	for (code, entry) in table.iter_mut().enumerate() {
 		let ladder = ladder_value(code, &weights, SID_DAC_LEAKAGE) as f32;
 		*entry = follower_response(ladder);
 	}
 	let equilibrium = table[SID_WAVEFORM_EQUILIBRIUM];
-	for entry in table.iter_mut() { *entry -= equilibrium; }
+	for entry in table.iter_mut() {
+		*entry -= equilibrium;
+	}
 	table
 }
 
@@ -121,25 +167,17 @@ fn smooth_conduction(position: f32, boundary: f32, width: f32) -> f32 {
 	0.5 * (displacement + displacement.mul_add(displacement, width * width).sqrt())
 }
 
-/* The cutoff control is intentionally nonuniform: a small code change can move across a very different frequency span depending on the local control-voltage region. */
+/* The cutoff law is represented as a saturating transistor-like conduction curve rather than a long linear ramp. FC=$000 preserves the low-end floor while upper codes approach a finite plateau. */
 fn cutoff_frequency(position: f32) -> f32 {
-	let opening = smooth_conduction(
-		position,
-		FILTER_CUTOFF_OPENING_POSITION,
-		FILTER_CUTOFF_OPENING_WIDTH,
-	);
-	let compression = smooth_conduction(
-		position,
-		FILTER_CUTOFF_COMPRESSION_POSITION,
-		FILTER_CUTOFF_COMPRESSION_WIDTH,
-	);
-	FILTER_CUTOFF_FLOOR_HZ + FILTER_CUTOFF_OPENING_SLOPE * opening
-		- FILTER_CUTOFF_COMPRESSION_SLOPE * compression
+	let sigmoid = |value: f32| 1.0 / (1.0 + (-value).exp());
+	let zero = sigmoid(-FILTER_CUTOFF_SIGMOID_CENTRE / FILTER_CUTOFF_SIGMOID_WIDTH);
+	let current = sigmoid((position - FILTER_CUTOFF_SIGMOID_CENTRE) / FILTER_CUTOFF_SIGMOID_WIDTH);
+	let normalised = ((current - zero) / (1.0 - zero)).clamp(0.0, 1.0);
+	FILTER_CUTOFF_FLOOR_HZ + (FILTER_CUTOFF_SATURATION_HZ - FILTER_CUTOFF_FLOOR_HZ) * normalised
 }
 
 fn smooth_window(position: f32, opening: f32, closing: f32, width: f32) -> f32 {
-	(smooth_conduction(position, opening, width)
-		- smooth_conduction(position, closing, width))
+	(smooth_conduction(position, opening, width) - smooth_conduction(position, closing, width))
 		/ (closing - opening)
 }
 
@@ -150,12 +188,13 @@ fn source_frequency_sensitivity(position: f32) -> f32 {
 		FILTER_SOURCE_CUTOFF_OPENING_END,
 		FILTER_SOURCE_CUTOFF_TRANSITION_WIDTH,
 	);
-	let closing = 1.0 - smooth_window(
-		position,
-		FILTER_SOURCE_CUTOFF_CLOSING_START,
-		FILTER_SOURCE_CUTOFF_CLOSING_END,
-		FILTER_SOURCE_CUTOFF_TRANSITION_WIDTH,
-	);
+	let closing = 1.0
+		- smooth_window(
+			position,
+			FILTER_SOURCE_CUTOFF_CLOSING_START,
+			FILTER_SOURCE_CUTOFF_CLOSING_END,
+			FILTER_SOURCE_CUTOFF_TRANSITION_WIDTH,
+		);
 	FILTER_SOURCE_CUTOFF_SENSITIVITY_HZ * opening * closing
 }
 
@@ -163,8 +202,7 @@ fn inverter_midpoint() -> f32 {
 	let span = SID_ANALOGUE_MAX_VOLTS - SID_ANALOGUE_MIN_VOLTS;
 	let resting_above_floor = SID_ANALOGUE_QUIESCENT_VOLTS - SID_ANALOGUE_MIN_VOLTS;
 	let logistic_odds = span / resting_above_floor - 1.0;
-	SID_ANALOGUE_QUIESCENT_VOLTS
-		- logistic_odds.ln() / SID_ANALOGUE_INVERTER_STEEPNESS
+	SID_ANALOGUE_QUIESCENT_VOLTS - logistic_odds.ln() / SID_ANALOGUE_INVERTER_STEEPNESS
 }
 
 fn opamp_output_analytic(input: f32) -> f32 {
@@ -182,13 +220,15 @@ fn local_opamp_slope(voltage: f32) -> f32 {
 }
 
 fn build_cutoff_control_positions() -> [f32; 2048] {
-	let weights = ladder_weights::<11>(SID_DAC_TWO_R_OVER_R, false);
-	let zero = ladder_value(0, &weights, SID_DAC_LEAKAGE);
-	let full = ladder_value(2047, &weights, SID_DAC_LEAKAGE);
+	/* The frequency-control network is physically a twelve-bit DAC whose MSB is permanently tied high; the eleven FC register bits drive the remaining ladder inputs (SID-SCHEMATICS-6581-DACS). */
+	const FIXED_MSB: usize = 1 << 11;
+	let weights = ladder_weights::<12>(SID_FILTER_DAC_TWO_R_OVER_R, false);
+	let zero = ladder_value(FIXED_MSB, &weights, SID_DAC_LEAKAGE);
+	let full = ladder_value(FIXED_MSB | 0x07ff, &weights, SID_DAC_LEAKAGE);
 	let span = full - zero;
 
 	std::array::from_fn(|code| {
-		let ladder = ladder_value(code, &weights, SID_DAC_LEAKAGE);
+		let ladder = ladder_value(FIXED_MSB | code, &weights, SID_DAC_LEAKAGE);
 		let normal = ((ladder - zero) / span) as f32;
 		(normal * 2047.0).clamp(0.0, 2047.0)
 	})
@@ -211,7 +251,7 @@ pub(super) fn build_filter_coefficients() -> Box<[FilterCoefficients; 2048]> {
 		damping,
 		input_drive: [0.0; FILTER_OPERATING_BINS],
 		feedback_drive: [0.0; FILTER_OPERATING_BINS],
-		g_source_gain: 0.0,
+		source_gain_modulation: 0.0,
 	};
 	let mut table: Box<[FilterCoefficients; 2048]> = vec![empty; 2048]
 		.into_boxed_slice()
@@ -220,25 +260,26 @@ pub(super) fn build_filter_coefficients() -> Box<[FilterCoefficients; 2048]> {
 	for (code, entry) in table.iter_mut().enumerate() {
 		let base_frequency = cutoff_frequency(cutoff_control[code]);
 		let frequency_sensitivity = source_frequency_sensitivity(cutoff_control[code]);
-		entry.g_source_gain = std::f32::consts::PI * frequency_sensitivity / sample_rate;
+		entry.source_gain_modulation = std::f32::consts::PI * frequency_sensitivity / sample_rate;
 		for bin in 0..FILTER_OPERATING_BINS {
 			let operating = bin as f32 / (FILTER_OPERATING_BINS - 1) as f32;
 			let available_headroom = SID_ANALOGUE_MAX_VOLTS - SID_ANALOGUE_QUIESCENT_VOLTS;
-			let bias_voltage = SID_ANALOGUE_QUIESCENT_VOLTS
-				+ available_headroom * 0.246 * operating;
+			let bias_voltage =
+				SID_ANALOGUE_QUIESCENT_VOLTS + available_headroom * 0.246 * operating;
 			let slope = local_opamp_slope(bias_voltage).clamp(0.08, 6.0);
 			let compression = 1.0 - 0.105 * operating - 0.025 * operating * operating;
 			let mobility = (compression + 0.016 * slope).clamp(0.76, 1.12);
-			let frequency = (base_frequency * mobility * FILTER_CUTOFF_FREQUENCY_SCALE)
-				.clamp(18.0, 19_800.0);
+			let frequency =
+				(base_frequency * mobility * FILTER_CUTOFF_FREQUENCY_SCALE).clamp(18.0, 19_800.0);
 			for resonance in 0..16 {
 				let high_resonance = ((resonance as f32 - 8.0) / 7.0).clamp(0.0, 1.0);
 				let low_cutoff_weight = ((1024.0 - code as f32) / 384.0).clamp(0.0, 1.0);
 				let resonance_frequency = frequency
-					* (1.0 - FILTER_CUTOFF_HIGH_RESONANCE_DROP
-						* high_resonance * low_cutoff_weight);
+					* (1.0
+						- FILTER_CUTOFF_HIGH_RESONANCE_DROP * high_resonance * low_cutoff_weight);
 				let g = (std::f32::consts::PI * resonance_frequency / sample_rate)
-					.tan().min(0.94);
+					.tan()
+					.min(0.94);
 				let k = damping[resonance];
 				let a1 = 1.0 / (1.0 + g * (g + k));
 				entry.a1[resonance][bin] = a1;
@@ -286,30 +327,71 @@ pub(super) struct AnalogueTransferSurface {
 	table: Box<[f32]>,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct AnalogueLoadPosition {
+	lower_base: usize,
+	upper_base: usize,
+	fraction: f32,
+}
+
 impl AnalogueTransferSurface {
 	#[inline(always)]
-	pub(super) fn sample(&self, conductance: f32, input: f32) -> f32 {
+	pub(super) fn load_position(conductance: f32) -> AnalogueLoadPosition {
 		let load_position = conductance.clamp(0.0, SID_ANALOGUE_MAX_CONDUCTANCE)
 			* (SID_ANALOGUE_LOAD_BINS - 1) as f32
 			/ SID_ANALOGUE_MAX_CONDUCTANCE;
-		let load_lower = load_position as usize;
-		let load_upper = (load_lower + 1).min(SID_ANALOGUE_LOAD_BINS - 1);
-		let load_fraction = load_position - load_lower as f32;
+		let lower = load_position as usize;
+		let upper = (lower + 1).min(SID_ANALOGUE_LOAD_BINS - 1);
+		AnalogueLoadPosition {
+			lower_base: lower * 2048,
+			upper_base: upper * 2048,
+			fraction: load_position - lower as f32,
+		}
+	}
 
+	#[inline(always)]
+	pub(super) fn sample(&self, conductance: f32, input: f32) -> f32 {
+		self.sample_at(Self::load_position(conductance), input)
+	}
+
+	/* Preblends the conductance axis of the analogue surface into one 2048-point
+	 * transfer curve. Routing and D418 select from these curves outside the
+	 * per-cycle signal path, leaving only the input-axis interpolation hot. */
+	pub(super) fn build_load_curve(&self, load: AnalogueLoadPosition) -> Box<[f32; 2049]> {
+		let mut curve = Box::new([0.0; 2049]);
+		for (code, entry) in curve[..2048].iter_mut().enumerate() {
+			let lower = self.table[load.lower_base + code];
+			let upper = self.table[load.upper_base + code];
+			*entry = lower + (upper - lower) * load.fraction;
+		}
+		curve[2048] = curve[2047];
+		curve
+	}
+
+	#[inline(always)]
+	pub(super) fn sample_curve(curve: &[f32; 2049], input: f32) -> f32 {
+		let input_position = input.clamp(0.0, 1.0) * 2047.0;
+		let input_lower = input_position as usize;
+		let input_fraction = input_position - input_lower as f32;
+		let left = curve[input_lower];
+		let right = curve[input_lower + 1];
+		left + (right - left) * input_fraction
+	}
+
+	#[inline(always)]
+	pub(super) fn sample_at(&self, load: AnalogueLoadPosition, input: f32) -> f32 {
 		let input_position = input.clamp(0.0, 1.0) * 2047.0;
 		let input_lower = input_position as usize;
 		let input_upper = (input_lower + 1).min(2047);
 		let input_fraction = input_position - input_lower as f32;
 
-		let lower_base = load_lower * 2048;
-		let upper_base = load_upper * 2048;
-		let lower_left = self.table[lower_base + input_lower];
-		let lower_right = self.table[lower_base + input_upper];
-		let upper_left = self.table[upper_base + input_lower];
-		let upper_right = self.table[upper_base + input_upper];
+		let lower_left = self.table[load.lower_base + input_lower];
+		let lower_right = self.table[load.lower_base + input_upper];
+		let upper_left = self.table[load.upper_base + input_lower];
+		let upper_right = self.table[load.upper_base + input_upper];
 		let lower_value = lower_left + (lower_right - lower_left) * input_fraction;
 		let upper_value = upper_left + (upper_right - upper_left) * input_fraction;
-		lower_value + (upper_value - lower_value) * load_fraction
+		lower_value + (upper_value - lower_value) * load.fraction
 	}
 }
 
@@ -319,8 +401,8 @@ pub(super) fn build_analogue_transfer_surface() -> AnalogueTransferSurface {
 	let span = maximum - minimum;
 	let mut table = vec![0.0f32; SID_ANALOGUE_LOAD_BINS * 2048];
 	for load_bin in 0..SID_ANALOGUE_LOAD_BINS {
-		let conductance = load_bin as f32 * SID_ANALOGUE_MAX_CONDUCTANCE
-			/ (SID_ANALOGUE_LOAD_BINS - 1) as f32;
+		let conductance =
+			load_bin as f32 * SID_ANALOGUE_MAX_CONDUCTANCE / (SID_ANALOGUE_LOAD_BINS - 1) as f32;
 		let base = load_bin * 2048;
 		for code in 0..2048 {
 			let normalised_input = code as f32 / 2047.0;
@@ -329,5 +411,7 @@ pub(super) fn build_analogue_transfer_surface() -> AnalogueTransferSurface {
 			table[base + code] = (output - minimum) / span;
 		}
 	}
-	AnalogueTransferSurface { table: table.into_boxed_slice() }
+	AnalogueTransferSurface {
+		table: table.into_boxed_slice(),
+	}
 }

@@ -2,7 +2,9 @@
 // src/fdd1541/nbz.rs — NBZ stream encoding and decoding
 // =======================================================
 
-use super::constants::{NIB_HEADER_LENGTH, NIB_MAX_DECOMPRESSED_LENGTH, NIB_SIGNATURE, NIB_TRACK_LENGTH};
+use super::constants::{
+	NIB_HEADER_LENGTH, NIB_MAX_DECOMPRESSED_LENGTH, NIB_SIGNATURE, NIB_TRACK_LENGTH,
+};
 
 const NBZ_MIN_MATCH: usize = 4;
 const NBZ_SEARCH_DEPTH: usize = 96;
@@ -110,7 +112,9 @@ impl<'a> NbzReader<'a> {
 		let mut value = 0usize;
 		for _ in 0..5 {
 			let byte = self.read_byte()?;
-			value = value.checked_mul(128)?.checked_add(usize::from(byte & 0x7f))?;
+			value = value
+				.checked_mul(128)?
+				.checked_add(usize::from(byte & 0x7f))?;
 			if byte & 0x80 == 0 {
 				return Some(value);
 			}
@@ -187,9 +191,8 @@ fn best_nbz_match(input: &[u8], position: usize, chains: &[Vec<usize>]) -> Optio
 
 fn nbz_hash(input: &[u8], position: usize) -> Option<usize> {
 	let bytes = input.get(position..position + 3)?;
-	let mixed = (usize::from(bytes[0]) * 251)
-		^ (usize::from(bytes[1]) * 31)
-		^ usize::from(bytes[2]);
+	let mixed =
+		(usize::from(bytes[0]) * 251) ^ (usize::from(bytes[1]) * 31) ^ usize::from(bytes[2]);
 	Some(mixed & (NBZ_HASH_BUCKETS - 1))
 }
 

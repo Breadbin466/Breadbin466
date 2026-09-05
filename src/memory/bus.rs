@@ -2,7 +2,7 @@
 // src/memory/bus.rs — Memory bus state
 // =======================================================
 
-use crate::memory::constants::{FLOAT_HOLD_CYCLES};
+use crate::memory::constants::FLOAT_HOLD_CYCLES;
 /* BusState models the last byte driven onto the shared motherboard data bus. Devices that expose fewer than eight bits, or no device at all, combine their result with this residual value. */
 pub struct BusState {
 	floating_byte: u8,
@@ -10,7 +10,7 @@ pub struct BusState {
 }
 
 impl BusState {
-/* Construction starts at the pulled-up idle value with no recent bus driver. */
+	/* Construction starts at the pulled-up idle value with no recent bus driver. */
 	pub fn new() -> Self {
 		Self {
 			floating_byte: 0xFF,
@@ -40,7 +40,7 @@ impl BusState {
 		self.floating_byte
 	}
 
-/* Reset discards both the retained byte and its age so pre-reset traffic cannot leak into the restarted machine. */
+	/* Reset discards both the retained byte and its age so pre-reset traffic cannot leak into the restarted machine. */
 	pub fn reset(&mut self) {
 		*self = Self::new();
 	}

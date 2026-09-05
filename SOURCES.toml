@@ -64,6 +64,15 @@ url = "https://www.c64-wiki.com/wiki/File:Mos_6510_mpu_nov_1982.pdf"
 archive_url = "https://www.c64-wiki.com/wiki/6510"
 
 [[source]]
+id = "CBM-HACKERS-6510-PORT-2000"
+title = "6510 and 8500 differences"
+author = "Nicolas Welte"
+publisher = "cbm-hackers mailing list archive"
+date = "2000-07-27"
+url = "https://www.softwolves.com/arkiv/cbm-hackers/3/3050.html"
+archive_url = "https://www.softwolves.com/arkiv/cbm-hackers/"
+
+[[source]]
 id = "C64-PLA-DISSECTED-2012"
 title = "The C64 PLA Dissected"
 author = "Thomas Giesel"
@@ -134,3 +143,57 @@ publisher = "Codebase64"
 date = "unknown"
 url = "https://codebase64.c64.org/doku.php?id=base:reu_registers"
 archive_url = "https://codebase64.c64.org/"
+
+[[source]]
+id = "TAP-FORMAT-SCHEPERS"
+title = "Raw Tape Image File Format"
+author = "Peter Schepers"
+publisher = "64Copy Central"
+date = "2004-03-11"
+url = "https://ist.uwaterloo.ca/~schepers/formats/TAP.TXT"
+archive_url = "https://ist.uwaterloo.ca/~schepers/formats.html"
+
+[[source]]
+id = "ICOM-GMOD2-HARDWARE"
+title = "GMod2"
+author = "Individual Computers"
+publisher = "Individual Computers Wiki"
+date = "2025"
+url = "https://wiki.icomp.de/wiki/GMod2"
+archive_url = "https://wiki.icomp.de/wiki/Category:GMOD"
+
+[[source]]
+id = "STM-M93C86-DATASHEET"
+title = "M93C86 Microwire Serial Access EEPROM"
+author = "STMicroelectronics"
+publisher = "STMicroelectronics"
+date = "2003"
+url = "https://www.st.com/en/memories/m93c86-w.html"
+archive_url = "https://www.st.com/en/memories/m93c86-w.html"
+
+[[source]]
+id = "SID-SCHEMATICS-ENVELOPE"
+title = "MOS 6581/8580 SID Schematics: Envelope Generator"
+author = "Leandro Nini and ttlworks"
+publisher = "SID_schematics project"
+date = "2021"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/Envelope-Overview"
+archive_url = "https://sourceforge.net/p/sidplay-residfp/wiki/SID%20internals/"
+
+[[source]]
+id = "SID-SCHEMATICS-6581-DACS"
+title = "MOS 6581 SID Schematics: 6581 DACs"
+author = "Leandro Nini and ttlworks"
+publisher = "SID_schematics project"
+date = "2021"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/6581-DACs"
+archive_url = "https://sourceforge.net/p/sidplay-residfp/wiki/SID%20internals%20-%206581%20DACs/"
+
+[[source]]
+id = "SID-SCHEMATICS-DATA-BUS"
+title = "MOS 6581/8580 SID Schematics: Data Bus"
+author = "Leandro Nini and ttlworks"
+publisher = "SID_schematics project"
+date = "2021"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/Data-Bus"
+archive_url = "https://sourceforge.net/p/sidplay-residfp/wiki/SID%20internals%20-%20Data%20Bus/"

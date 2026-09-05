@@ -1,3 +1,7 @@
+// =======================================================
+// src/emulator/debugger_disassembly.rs — Debugger disassembly formatting
+// =======================================================
+
 /*
  * Breadbin466 interactive debugger: 6510/8502 disassembly formatting.
  *
@@ -16,9 +20,13 @@ use crate::cpu::decoder::AddressingMode;
 pub fn instruction_length(opcode: u8) -> u16 {
 	match OPCODES[opcode as usize].mode {
 		AddressingMode::Implied | AddressingMode::Accumulator => 1,
-		AddressingMode::Immediate | AddressingMode::ZeroPage | AddressingMode::ZeroPageX
-		| AddressingMode::ZeroPageY | AddressingMode::IndexedIndirect
-		| AddressingMode::IndirectIndexed | AddressingMode::Relative => 2,
+		AddressingMode::Immediate
+		| AddressingMode::ZeroPage
+		| AddressingMode::ZeroPageX
+		| AddressingMode::ZeroPageY
+		| AddressingMode::IndexedIndirect
+		| AddressingMode::IndirectIndexed
+		| AddressingMode::Relative => 2,
 		_ => 3,
 	}
 }
@@ -38,8 +46,12 @@ pub fn format_instruction(pc: u16, bytes: &[u8]) -> String {
 		AddressingMode::ZeroPageX => format!(" ${:02X},X", bytes[1]),
 		AddressingMode::ZeroPageY => format!(" ${:02X},Y", bytes[1]),
 		AddressingMode::Absolute => format!(" ${:04X}", u16::from_le_bytes([bytes[1], bytes[2]])),
-		AddressingMode::AbsoluteX => format!(" ${:04X},X", u16::from_le_bytes([bytes[1], bytes[2]])),
-		AddressingMode::AbsoluteY => format!(" ${:04X},Y", u16::from_le_bytes([bytes[1], bytes[2]])),
+		AddressingMode::AbsoluteX => {
+			format!(" ${:04X},X", u16::from_le_bytes([bytes[1], bytes[2]]))
+		}
+		AddressingMode::AbsoluteY => {
+			format!(" ${:04X},Y", u16::from_le_bytes([bytes[1], bytes[2]]))
+		}
 		AddressingMode::Indirect => format!(" (${:04X})", u16::from_le_bytes([bytes[1], bytes[2]])),
 		AddressingMode::IndexedIndirect => format!(" (${:02X},X)", bytes[1]),
 		AddressingMode::IndirectIndexed => format!(" (${:02X}),Y", bytes[1]),

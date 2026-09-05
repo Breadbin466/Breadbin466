@@ -2,8 +2,8 @@
 // src/cartridge/mapper_structured_basic.rs — Structured BASIC cartridge mapper
 // =======================================================
 
-use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 use super::bank_storage::BankStorage;
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 /* StructuredBasicMapper selects ROML banks through its IO register while keeping a fixed game-mode mapping. Sparse packet placement is preserved through BankStorage. */
 pub struct StructuredBasicMapper {

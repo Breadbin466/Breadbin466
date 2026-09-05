@@ -7,21 +7,24 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use winit::window::Window;
 
+use super::history::History;
 use crate::emulator::Result;
 use crate::motherboard::bus::DriveMode;
-use super::history::History;
 
+#[cfg(target_os = "linux")]
+use super::menu_linux::PlatformMenu;
 #[cfg(target_os = "macos")]
 use super::menu_macos::PlatformMenu;
 #[cfg(target_os = "windows")]
 use super::menu_windows::PlatformMenu;
-#[cfg(target_os = "linux")]
-use super::menu_linux::PlatformMenu;
 
 static MENU_EVENTS: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 
 pub(crate) fn push_menu_event(id: String) {
-	if let Ok(mut events) = MENU_EVENTS.get_or_init(|| Mutex::new(VecDeque::new())).lock() {
+	if let Ok(mut events) = MENU_EVENTS
+		.get_or_init(|| Mutex::new(VecDeque::new()))
+		.lock()
+	{
 		events.push_back(id);
 	}
 }
@@ -59,33 +62,31 @@ pub struct MenuShortcut {
 }
 
 impl MenuShortcut {
+	/* Primary application commands use Command on macOS and Control on Windows and Linux. Keeping one semantic shortcut model prevents platform backends from drifting apart. */
 	const fn command(key: MenuKey) -> Self {
-		#[cfg(target_os = "windows")]
-		{
-			Self { key, modifier: MenuModifier::Alt, shift: false }
-		}
-		#[cfg(not(target_os = "windows"))]
-		{
-			Self { key, modifier: MenuModifier::Primary, shift: false }
+		Self {
+			key,
+			modifier: MenuModifier::Primary,
+			shift: false,
 		}
 	}
 
 	const fn command_shift(key: MenuKey) -> Self {
-		#[cfg(target_os = "windows")]
-		{
-			Self { key, modifier: MenuModifier::Alt, shift: true }
-		}
-		#[cfg(not(target_os = "windows"))]
-		{
-			Self { key, modifier: MenuModifier::Primary, shift: true }
+		Self {
+			key,
+			modifier: MenuModifier::Primary,
+			shift: true,
 		}
 	}
 
-	#[cfg(target_os = "windows")]
+	#[cfg(any(target_os = "windows", target_os = "linux"))]
 	const fn alt(key: MenuKey) -> Self {
-		Self { key, modifier: MenuModifier::Alt, shift: false }
+		Self {
+			key,
+			modifier: MenuModifier::Alt,
+			shift: false,
+		}
 	}
-
 }
 
 #[derive(Clone, Debug)]
@@ -145,7 +146,11 @@ impl MenuModel {
 	fn set_checked_in_entries(entries: &mut [MenuEntry], id: &str, checked: bool) -> bool {
 		for entry in entries {
 			match entry {
-				MenuEntry::Check { id: entry_id, checked: value, .. } if entry_id == id => {
+				MenuEntry::Check {
+					id: entry_id,
+					checked: value,
+					..
+				} if entry_id == id => {
 					*value = checked;
 					return true;
 				}
@@ -168,7 +173,11 @@ impl MenuModel {
 		}
 	}
 
-	fn replace_in_entries(entries: &mut [MenuEntry], submenu_id: &str, replacement: &[MenuEntry]) -> bool {
+	fn replace_in_entries(
+		entries: &mut [MenuEntry],
+		submenu_id: &str,
+		replacement: &[MenuEntry],
+	) -> bool {
 		for entry in entries {
 			if let MenuEntry::Submenu(section) = entry {
 				if section.id == submenu_id {
@@ -192,10 +201,8 @@ pub struct MenuIds {
 	pub open_cart: String,
 	pub open_d64_g64: String,
 	pub unmount_d64_g64: String,
-	pub disk_create_d64: String,
-	pub disk_create_g64: String,
-	pub disk_create_nib: String,
-	pub disk_create_nbz: String,
+	pub disk_create: String,
+	pub disk_convert: String,
 	pub tape_mount: String,
 	pub tape_create: String,
 	pub tape_eject: String,
@@ -211,6 +218,7 @@ pub struct MenuIds {
 	pub reset_detach: String,
 	pub pause: String,
 	pub cycle_joystick: String,
+	pub mouse_1351: String,
 	pub cartridge_reset: String,
 	pub cartridge_freeze: String,
 	pub cartridge_menu: String,
@@ -230,6 +238,7 @@ pub struct MenuIds {
 	pub show_debug_menu: String,
 	pub debug_mute_warp: String,
 	pub debug_mute_global: String,
+	pub debug_display_uptime: String,
 	pub reu_1764_512k: String,
 	pub debug_c128_2mhz: String,
 	pub rom_char: String,
@@ -248,10 +257,8 @@ impl MenuIds {
 			open_cart: "computer_open_crt".into(),
 			open_d64_g64: "computer_open_d64_g64".into(),
 			unmount_d64_g64: "computer_unmount_d64_g64".into(),
-			disk_create_d64: "1541_create_d64".into(),
-			disk_create_g64: "1541_create_g64".into(),
-			disk_create_nib: "1541_create_nib".into(),
-			disk_create_nbz: "1541_create_nbz".into(),
+			disk_create: "1541_create_disk".into(),
+			disk_convert: "1541_convert_disk".into(),
 			tape_mount: "tape_mount_computer".into(),
 			tape_create: "tape_create_computer".into(),
 			tape_eject: "tape_eject_computer".into(),
@@ -267,6 +274,7 @@ impl MenuIds {
 			reset_detach: "emu_reset_detach".into(),
 			pause: "emu_pause".into(),
 			cycle_joystick: "emu_cycle_joystick".into(),
+			mouse_1351: "emu_mouse_1351".into(),
 			cartridge_reset: "cartridge_reset_button".into(),
 			cartridge_freeze: "cartridge_freeze_button".into(),
 			cartridge_menu: "cartridge_menu_button".into(),
@@ -286,6 +294,7 @@ impl MenuIds {
 			show_debug_menu: "view_show_debug".into(),
 			debug_mute_warp: "dbg_mute_warp".into(),
 			debug_mute_global: "dbg_mute_global".into(),
+			debug_display_uptime: "dbg_display_uptime".into(),
 			reu_1764_512k: "reu_1764_512k".into(),
 			debug_c128_2mhz: "dbg_c128_2mhz".into(),
 			rom_char: "dbg_rom_char".into(),
@@ -304,6 +313,7 @@ pub struct MenuManager {
 	model: Arc<RwLock<MenuModel>>,
 	platform: Mutex<PlatformMenu>,
 	debug_visible: Cell<bool>,
+	display_uptime: Cell<bool>,
 }
 
 impl MenuManager {
@@ -319,6 +329,7 @@ impl MenuManager {
 			model,
 			platform: Mutex::new(platform),
 			debug_visible: Cell::new(history.debug_menu_visible),
+			display_uptime: Cell::new(history.display_uptime),
 		};
 		Ok(manager)
 	}
@@ -337,7 +348,11 @@ impl MenuManager {
 		modifier: MenuModifier,
 		shift: bool,
 	) -> Option<String> {
-		let shortcut = MenuShortcut { key, modifier, shift };
+		let shortcut = MenuShortcut {
+			key,
+			modifier,
+			shift,
+		};
 		let model = self.model.read().ok()?;
 		for section in &model.sections {
 			if section.enabled {
@@ -352,9 +367,18 @@ impl MenuManager {
 	fn shortcut_in_entries(entries: &[MenuEntry], shortcut: MenuShortcut) -> Option<String> {
 		for entry in entries {
 			match entry {
-				MenuEntry::Action { id, enabled: true, shortcut: Some(value), .. }
-				| MenuEntry::Check { id, enabled: true, shortcut: Some(value), .. }
-					if *value == shortcut => return Some(id.clone()),
+				MenuEntry::Action {
+					id,
+					enabled: true,
+					shortcut: Some(value),
+					..
+				}
+				| MenuEntry::Check {
+					id,
+					enabled: true,
+					shortcut: Some(value),
+					..
+				} if *value == shortcut => return Some(id.clone()),
 				MenuEntry::Submenu(section) if section.enabled => {
 					if let Some(id) = Self::shortcut_in_entries(&section.entries, shortcut) {
 						return Some(id);
@@ -380,7 +404,10 @@ impl MenuManager {
 		if let Ok(mut model) = self.model.write() {
 			model.sections.retain(|section| section.id != "debug");
 			if visible {
-				model.sections.insert(Self::debug_insert_index(), Self::build_debug_section(&self.ids));
+				model.sections.insert(
+					Self::debug_insert_index(),
+					Self::build_debug_section(&self.ids, self.display_uptime.get()),
+				);
 			}
 		}
 		if let Ok(mut platform) = self.platform.lock() {
@@ -389,11 +416,15 @@ impl MenuManager {
 	}
 
 	pub fn set_radio_selection(&self, active_id: &str, group_ids: &[&str]) {
-		let changed = self.model.write().map(|mut model| {
-			group_ids.iter().fold(false, |changed, id| {
-				model.set_checked(id, *id == active_id) || changed
+		let changed = self
+			.model
+			.write()
+			.map(|mut model| {
+				group_ids.iter().fold(false, |changed, id| {
+					model.set_checked(id, *id == active_id) || changed
+				})
 			})
-		}).unwrap_or(false);
+			.unwrap_or(false);
 
 		/* Native menu reconstruction is avoided while a resize continues within
 		 * the same preset state. This matters during free window dragging, where
@@ -406,7 +437,14 @@ impl MenuManager {
 	}
 
 	pub fn set_checked(&self, id: &str, checked: bool) {
-		let changed = self.model.write().map(|mut model| model.set_checked(id, checked)).unwrap_or(false);
+		if id == self.ids.debug_display_uptime {
+			self.display_uptime.set(checked);
+		}
+		let changed = self
+			.model
+			.write()
+			.map(|mut model| model.set_checked(id, checked))
+			.unwrap_or(false);
 		if changed {
 			if let Ok(mut platform) = self.platform.lock() {
 				let _ = platform.set_checked(id, checked);
@@ -431,7 +469,11 @@ impl MenuManager {
 	fn replace_recent_entries(model: &mut MenuModel, ids: &MenuIds, history: &History) {
 		model.replace_submenu_entries(
 			"recent_crt",
-			Self::recent_entries(&ids.recent_crt_base, &history.crt_files, "No recent cartridges"),
+			Self::recent_entries(
+				&ids.recent_crt_base,
+				&history.crt_files,
+				"No recent cartridges",
+			),
 		);
 		model.replace_submenu_entries(
 			"recent_prg",
@@ -439,7 +481,11 @@ impl MenuManager {
 		);
 		model.replace_submenu_entries(
 			"recent_disk",
-			Self::recent_entries(&ids.recent_d64_g64_base, &history.d64_g64_files, "No recent disks"),
+			Self::recent_entries(
+				&ids.recent_d64_g64_base,
+				&history.d64_g64_files,
+				"No recent disks",
+			),
 		);
 		model.replace_submenu_entries(
 			"recent_tape",
@@ -447,14 +493,25 @@ impl MenuManager {
 		);
 	}
 
-	fn recent_entries(base: &str, paths: &std::collections::VecDeque<std::path::PathBuf>, empty: &str) -> Vec<MenuEntry> {
+	fn recent_entries(
+		base: &str,
+		paths: &std::collections::VecDeque<std::path::PathBuf>,
+		empty: &str,
+	) -> Vec<MenuEntry> {
 		if paths.is_empty() {
 			return vec![Self::action("", empty, false, None)];
 		}
-		paths.iter().enumerate().map(|(index, path)| {
-			let label = path.file_name().and_then(|name| name.to_str()).unwrap_or("?");
-			Self::action(format!("{}{}", base, index), label, true, None)
-		}).collect()
+		paths
+			.iter()
+			.enumerate()
+			.map(|(index, path)| {
+				let label = path
+					.file_name()
+					.and_then(|name| name.to_str())
+					.unwrap_or("?");
+				Self::action(format!("{}{}", base, index), label, true, None)
+			})
+			.collect()
 	}
 
 	/* The top-level model fixes section ordering while each section builder owns one coherent command domain. */
@@ -468,7 +525,7 @@ impl MenuManager {
 		sections.push(Self::build_drive_section(ids, history.drive_mode));
 		sections.push(Self::build_view_section(ids, history));
 		if history.debug_menu_visible {
-			sections.push(Self::build_debug_section(ids));
+			sections.push(Self::build_debug_section(ids, history.display_uptime));
 		}
 		#[cfg(not(target_os = "macos"))]
 		sections.push(Self::build_help_section(ids));
@@ -479,32 +536,83 @@ impl MenuManager {
 	/* Application lifecycle commands remain separate from machine controls so native platforms can place them according to their conventions. */
 	fn build_application_section(ids: &MenuIds) -> MenuSection {
 		let mut section = MenuSection::new("application", "Breadbin466");
-		section.entries.push(Self::action(&ids.about, "About Breadbin466", true, None));
+		section
+			.entries
+			.push(Self::action(&ids.about, "About Breadbin466", true, None));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::action(&ids.quit, "Quit Breadbin466", true, Some(MenuShortcut::command(MenuKey::Q))));
+		section.entries.push(Self::action(
+			&ids.quit,
+			"Quit Breadbin466",
+			true,
+			Some(MenuShortcut::command(MenuKey::Q)),
+		));
 		section
 	}
 
 	/* Computer actions group machine reset, expansion hardware, pause and joystick routing because they alter the running C64 as a whole. */
 	fn build_computer_section(ids: &MenuIds) -> MenuSection {
 		let mut section = MenuSection::new("computer", "Computer");
-		section.entries.push(Self::action(&ids.soft_reset, "Soft Reset", true, Some(MenuShortcut::command_shift(MenuKey::R))));
-		section.entries.push(Self::action(&ids.reset, "Hard Reset", true, Some(MenuShortcut::command(MenuKey::R))));
+		section.entries.push(Self::action(
+			&ids.soft_reset,
+			"Soft Reset",
+			true,
+			Some(MenuShortcut::command_shift(MenuKey::R)),
+		));
+		section.entries.push(Self::action(
+			&ids.reset,
+			"Hard Reset",
+			true,
+			Some(MenuShortcut::command(MenuKey::R)),
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::action(&ids.cycle_joystick, "Cycle Joystick", true, Some(MenuShortcut::command(MenuKey::J))));
+		section.entries.push(Self::action(
+			&ids.cycle_joystick,
+			"Cycle Joystick",
+			true,
+			Some(MenuShortcut::command(MenuKey::J)),
+		));
+		section.entries.push(Self::check(
+			&ids.mouse_1351,
+			"Enable Commodore 1351 Mouse (Port 1)",
+			true,
+			false,
+			Some(MenuShortcut::command(MenuKey::M)),
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.reu_1764_512k, "Enable Commodore 1764 REU (512 KB)", true, false, None));
+		section.entries.push(Self::check(
+			&ids.reu_1764_512k,
+			"Enable Commodore 1764 REU (512 KB)",
+			true,
+			false,
+			None,
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.pause, "Pause", true, false, Some(MenuShortcut::command(MenuKey::P))));
+		section.entries.push(Self::check(
+			&ids.pause,
+			"Pause",
+			true,
+			false,
+			Some(MenuShortcut::command(MenuKey::P)),
+		));
 		#[cfg(target_os = "windows")]
 		{
 			section.entries.push(MenuEntry::Separator);
-			section.entries.push(Self::action(&ids.quit, "Exit", true, Some(MenuShortcut::alt(MenuKey::F4))));
+			section.entries.push(Self::action(
+				&ids.quit,
+				"Exit",
+				true,
+				Some(MenuShortcut::alt(MenuKey::F4)),
+			));
 		}
 		#[cfg(target_os = "linux")]
 		{
 			section.entries.push(MenuEntry::Separator);
-			section.entries.push(Self::action(&ids.quit, "Quit", true, Some(MenuShortcut::command(MenuKey::Q))));
+			section.entries.push(Self::action(
+				&ids.quit,
+				"Quit",
+				true,
+				Some(MenuShortcut::alt(MenuKey::F4)),
+			));
 		}
 		section
 	}
@@ -512,92 +620,300 @@ impl MenuManager {
 	/* Tape actions mirror the transport controls and media lifecycle of the datassette. */
 	fn build_tape_section(ids: &MenuIds) -> MenuSection {
 		let mut section = MenuSection::new("datassette", "Datassette");
-		section.entries.push(Self::action(&ids.tape_mount, "Insert Tape (.tap)", true, Some(MenuShortcut::command(MenuKey::T))));
-		section.entries.push(Self::action(&ids.tape_create, "Create new Tape (.tap)", true, None));
+		section.entries.push(Self::action(
+			&ids.tape_mount,
+			"Insert Tape",
+			true,
+			Some(MenuShortcut::command(MenuKey::T)),
+		));
+		section.entries.push(Self::action(
+			&ids.tape_create,
+			"Create New Tape…",
+			true,
+			None,
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::action(&ids.tape_eject, "Eject Tape", true, Some(MenuShortcut::command_shift(MenuKey::T))));
-		section.entries.push(Self::action(&ids.tape_rewind, "Rewind Tape", true, None));
-		section.entries.push(MenuEntry::Submenu(MenuSection::new("recent_tape", "Recent Tape (.tap)")));
+		section.entries.push(Self::action(
+			&ids.tape_eject,
+			"Eject Tape",
+			true,
+			Some(MenuShortcut::command_shift(MenuKey::T)),
+		));
+		section
+			.entries
+			.push(Self::action(&ids.tape_rewind, "Rewind Tape", true, None));
+		section.entries.push(MenuEntry::Submenu(MenuSection::new(
+			"recent_tape",
+			"Recent Tape",
+		)));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.tape_play, "Press PLAY on Tape", true, false, None));
-		section.entries.push(Self::check(&ids.tape_record_play, "Press RECORD AND PLAY on Tape", true, false, None));
+		section.entries.push(Self::check(
+			&ids.tape_play,
+			"Press PLAY on Tape",
+			true,
+			false,
+			None,
+		));
+		section.entries.push(Self::check(
+			&ids.tape_record_play,
+			"Press RECORD AND PLAY on Tape",
+			true,
+			false,
+			None,
+		));
 		section
 	}
 
 	/* Cartridge actions expose mount and hardware button operations only when a cartridge can service them. */
 	fn build_cartridge_section(ids: &MenuIds) -> MenuSection {
 		let mut section = MenuSection::new("cartridge", "Cartridge");
-		section.entries.push(Self::action(&ids.open_cart, "Insert Cartridge (.crt)", true, Some(MenuShortcut::command(MenuKey::C))));
-		section.entries.push(Self::action(&ids.reset_detach, "Remove Cartridge", true, Some(MenuShortcut::command_shift(MenuKey::C))));
-		section.entries.push(MenuEntry::Submenu(MenuSection::new("recent_crt", "Recent Cartridge (.crt)")));
+		section.entries.push(Self::action(
+			&ids.open_cart,
+			"Insert Cartridge",
+			true,
+			Some(MenuShortcut::command(MenuKey::C)),
+		));
+		section.entries.push(Self::action(
+			&ids.reset_detach,
+			"Remove Cartridge",
+			true,
+			Some(MenuShortcut::command_shift(MenuKey::C)),
+		));
+		section.entries.push(MenuEntry::Submenu(MenuSection::new(
+			"recent_crt",
+			"Recent Cartridge",
+		)));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::action(&ids.cartridge_reset, "Reset Button", true, None));
-		section.entries.push(Self::action(&ids.cartridge_freeze, "Freeze Button", true, Some(MenuShortcut::command(MenuKey::F))));
-		section.entries.push(Self::action(&ids.cartridge_menu, "Menu Button", true, Some(MenuShortcut::command(MenuKey::M))));
+		section.entries.push(Self::action(
+			&ids.cartridge_reset,
+			"Reset Button",
+			true,
+			None,
+		));
+		section.entries.push(Self::action(
+			&ids.cartridge_freeze,
+			"Freeze Button",
+			true,
+			Some(MenuShortcut::command(MenuKey::F)),
+		));
+		section.entries.push(Self::action(
+			&ids.cartridge_menu,
+			"Menu Button",
+			true,
+			Some(MenuShortcut::command_shift(MenuKey::M)),
+		));
 		section
 	}
 
 	/* Drive actions combine media management, DOS shortcuts and the selected low-level drive mode. */
 	fn build_drive_section(ids: &MenuIds, drive_mode: DriveMode) -> MenuSection {
 		let mut section = MenuSection::new("drive", "1541");
-		section.entries.push(Self::action(&ids.open_d64_g64, "Insert Disk (.d64/.g64/.nib/.nbz)", true, Some(MenuShortcut::command(MenuKey::D))));
-		section.entries.push(Self::action(&ids.unmount_d64_g64, "Remove Disk (.d64/.g64/.nib/.nbz)", true, Some(MenuShortcut::command_shift(MenuKey::D))));
-		section.entries.push(MenuEntry::Submenu(MenuSection::new("recent_disk", "Recent Disk (.d64/.g64/.nib/.nbz)")));
+		section.entries.push(Self::action(
+			&ids.open_d64_g64,
+			"Insert Disk",
+			true,
+			Some(MenuShortcut::command(MenuKey::D)),
+		));
+		section.entries.push(Self::action(
+			&ids.unmount_d64_g64,
+			"Eject Disk",
+			true,
+			Some(MenuShortcut::command_shift(MenuKey::D)),
+		));
+		section.entries.push(MenuEntry::Submenu(MenuSection::new(
+			"recent_disk",
+			"Recent Disk",
+		)));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::action(&ids.disk_create_d64, "Create new Disk (.d64)", true, None));
-		section.entries.push(Self::action(&ids.disk_create_g64, "Create new Disk (.g64)", true, None));
-		section.entries.push(Self::action(&ids.disk_create_nib, "Create new Disk (.nib)", true, None));
-		section.entries.push(Self::action(&ids.disk_create_nbz, "Create new Disk (.nbz)", true, None));
+		section.entries.push(Self::action(
+			&ids.disk_create,
+			"Create New Disk…",
+			true,
+			None,
+		));
+		section.entries.push(Self::action(
+			&ids.disk_convert,
+			"Convert Image…",
+			true,
+			None,
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::action(&ids.cmd_directory, "LOAD Directory (LOAD\"$\",8)", true, None));
-		section.entries.push(Self::action(&ids.cmd_load_first, "LOAD first File (LOAD\"*\",8,1)", true, None));
+		section.entries.push(Self::action(
+			&ids.cmd_directory,
+			"LOAD Directory (LOAD\"$\",8)",
+			true,
+			None,
+		));
+		section.entries.push(Self::action(
+			&ids.cmd_load_first,
+			"LOAD first File (LOAD\"*\",8,1)",
+			true,
+			None,
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.drive_off, "1541 Disabled", true, drive_mode == DriveMode::Off, None));
-		section.entries.push(Self::check(&ids.drive_lle, "1541 Enabled", true, drive_mode == DriveMode::Lle, None));
+		section.entries.push(Self::check(
+			&ids.drive_off,
+			"1541 Disabled",
+			true,
+			drive_mode == DriveMode::Off,
+			None,
+		));
+		section.entries.push(Self::check(
+			&ids.drive_lle,
+			"1541 Enabled",
+			true,
+			drive_mode == DriveMode::Lle,
+			None,
+		));
 		section
 	}
 
 	/* View actions contain host presentation state and persisted UI visibility choices. */
 	fn build_view_section(ids: &MenuIds, history: &History) -> MenuSection {
 		let mut section = MenuSection::new("view", "View");
-		section.entries.push(Self::action(&ids.inspector_window, "Inspector", true, Some(MenuShortcut::command(MenuKey::I))));
-		#[cfg(target_os = "windows")]
-		section.entries.push(Self::action(&ids.fullscreen, "Toggle Fullscreen", true, Some(MenuShortcut::alt(MenuKey::Enter))));
-		#[cfg(not(target_os = "windows"))]
-		section.entries.push(Self::action(&ids.fullscreen, "Toggle Fullscreen", true, None));
+		section.entries.push(Self::action(
+			&ids.inspector_window,
+			"Inspector",
+			true,
+			Some(MenuShortcut::command(MenuKey::I)),
+		));
+		#[cfg(any(target_os = "windows", target_os = "linux"))]
+		section.entries.push(Self::action(
+			&ids.fullscreen,
+			"Toggle Fullscreen",
+			true,
+			Some(MenuShortcut::alt(MenuKey::Enter)),
+		));
+		#[cfg(target_os = "macos")]
+		section.entries.push(Self::action(
+			&ids.fullscreen,
+			"Toggle Fullscreen",
+			true,
+			None,
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.show_debug_menu, "Show Debug Menu", true, history.debug_menu_visible, None));
+		section.entries.push(Self::check(
+			&ids.show_debug_menu,
+			"Show Debug Menu",
+			true,
+			history.debug_menu_visible,
+			None,
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.view_osd, "Enable OSD", true, history.osd_enabled, None));
+		section.entries.push(Self::check(
+			&ids.view_osd,
+			"Enable OSD",
+			true,
+			history.osd_enabled,
+			None,
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.scale_1x, "Scale 1x", true, false, None));
-		section.entries.push(Self::check(&ids.scale_2x, "Scale 2x", true, true, None));
-		section.entries.push(Self::check(&ids.scale_3x, "Scale 3x", true, false, None));
+		section
+			.entries
+			.push(Self::check(&ids.scale_1x, "Scale 1x", true, false, None));
+		section
+			.entries
+			.push(Self::check(&ids.scale_2x, "Scale 2x", true, true, None));
+		section
+			.entries
+			.push(Self::check(&ids.scale_3x, "Scale 3x", true, false, None));
 		section
 	}
 
 	/* Debug actions expose optional hardware substitutions and diagnostics without entering the normal user command groups. */
-	fn build_debug_section(ids: &MenuIds) -> MenuSection {
+	fn build_debug_section(ids: &MenuIds, display_uptime: bool) -> MenuSection {
 		let mut section = MenuSection::new("debug", "Debug");
-		section.entries.push(Self::action(&ids.open_prg, "Inject .prg", true, None));
-		section.entries.push(Self::action(&ids.open_prg_run, "Inject and RUN .prg", true, None));
-		section.entries.push(MenuEntry::Submenu(MenuSection::new("recent_prg", "Recent .prg")));
+		section
+			.entries
+			.push(Self::action(&ids.open_prg, "Inject .prg", true, None));
+		section.entries.push(Self::action(
+			&ids.open_prg_run,
+			"Inject and RUN .prg",
+			true,
+			None,
+		));
+		section.entries.push(MenuEntry::Submenu(MenuSection::new(
+			"recent_prg",
+			"Recent .prg",
+		)));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.debug_mute_warp, "Mute SID during Warp", true, true, None));
-		section.entries.push(Self::check(&ids.debug_mute_global, "Mute Audio", true, false, None));
+		section.entries.push(Self::check(
+			&ids.debug_mute_warp,
+			"Mute SID during Warp",
+			true,
+			true,
+			None,
+		));
+		section.entries.push(Self::check(
+			&ids.debug_mute_global,
+			"Mute Audio",
+			true,
+			false,
+			None,
+		));
+		section.entries.push(Self::check(
+			&ids.debug_display_uptime,
+			"Display Uptime",
+			true,
+			display_uptime,
+			None,
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.debug_c128_2mhz, "Use 8502 (CPU selectable 2 MHz Mode)", true, false, None));
+		section.entries.push(Self::check(
+			&ids.debug_c128_2mhz,
+			"Use 8502 (CPU selectable 2 MHz Mode)",
+			true,
+			false,
+			None,
+		));
 		section.entries.push(MenuEntry::Separator);
-		section.entries.push(Self::check(&ids.warp_mode, "Warp Mode", true, false, Some(MenuShortcut::command(MenuKey::W))));
-		section.entries.push(Self::check(&ids.warp_1541, "Warp Mode on 1541 Access", true, false, Some(MenuShortcut::command_shift(MenuKey::W))));
+		section.entries.push(Self::check(
+			&ids.warp_mode,
+			"Warp Mode",
+			true,
+			false,
+			Some(MenuShortcut::command(MenuKey::W)),
+		));
+		section.entries.push(Self::check(
+			&ids.warp_1541,
+			"Warp Mode on 1541 Access",
+			true,
+			false,
+			Some(MenuShortcut::command_shift(MenuKey::W)),
+		));
 		section.entries.push(MenuEntry::Separator);
 		let mut roms = MenuSection::new("custom_roms", "Custom ROMs");
-		roms.entries.push(Self::action(&ids.rom_char, "Character ROM (4KB)...", true, None));
-		roms.entries.push(Self::action(&ids.rom_basic, "BASIC ROM (8KB)...", true, None));
-		roms.entries.push(Self::action(&ids.rom_kernal, "KERNAL ROM (8KB)...", true, None));
-		roms.entries.push(Self::action(&ids.rom_drive, "1541 ROM (16KB)...", true, None));
+		roms.entries.push(Self::action(
+			&ids.rom_char,
+			"Character ROM (4KB)...",
+			true,
+			None,
+		));
+		roms.entries.push(Self::action(
+			&ids.rom_basic,
+			"BASIC ROM (8KB)...",
+			true,
+			None,
+		));
+		roms.entries.push(Self::action(
+			&ids.rom_kernal,
+			"KERNAL ROM (8KB)...",
+			true,
+			None,
+		));
+		roms.entries.push(Self::action(
+			&ids.rom_drive,
+			"1541 ROM (16KB)...",
+			true,
+			None,
+		));
 		roms.entries.push(MenuEntry::Separator);
-		roms.entries.push(Self::action(&ids.rom_use_original, "Use Original ROMs", true, None));
+		roms.entries.push(Self::action(
+			&ids.rom_use_original,
+			"Use Original ROMs",
+			true,
+			None,
+		));
 		section.entries.push(MenuEntry::Submenu(roms));
 		section
 	}
@@ -606,22 +922,50 @@ impl MenuManager {
 	/* Help remains a small platform-neutral section whose placement is decided by the native backend. */
 	fn build_help_section(ids: &MenuIds) -> MenuSection {
 		let mut section = MenuSection::new("help", "Help");
-		section.entries.push(Self::action(&ids.about, "About Breadbin466", true, None));
+		section
+			.entries
+			.push(Self::action(&ids.about, "About Breadbin466", true, None));
 		section
 	}
 
 	fn debug_insert_index() -> usize {
 		#[cfg(target_os = "macos")]
-		{ 6 }
+		{
+			6
+		}
 		#[cfg(not(target_os = "macos"))]
-		{ 5 }
+		{
+			5
+		}
 	}
 
-	fn action(id: impl Into<String>, label: impl Into<String>, enabled: bool, shortcut: Option<MenuShortcut>) -> MenuEntry {
-		MenuEntry::Action { id: id.into(), label: label.into(), enabled, shortcut }
+	fn action(
+		id: impl Into<String>,
+		label: impl Into<String>,
+		enabled: bool,
+		shortcut: Option<MenuShortcut>,
+	) -> MenuEntry {
+		MenuEntry::Action {
+			id: id.into(),
+			label: label.into(),
+			enabled,
+			shortcut,
+		}
 	}
 
-	fn check(id: impl Into<String>, label: impl Into<String>, enabled: bool, checked: bool, shortcut: Option<MenuShortcut>) -> MenuEntry {
-		MenuEntry::Check { id: id.into(), label: label.into(), enabled, checked, shortcut }
+	fn check(
+		id: impl Into<String>,
+		label: impl Into<String>,
+		enabled: bool,
+		checked: bool,
+		shortcut: Option<MenuShortcut>,
+	) -> MenuEntry {
+		MenuEntry::Check {
+			id: id.into(),
+			label: label.into(),
+			enabled,
+			checked,
+			shortcut,
+		}
 	}
 }

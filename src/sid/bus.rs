@@ -1,49 +1,44 @@
 // =======================================================
-// src/sid/bus.rs — SID internal data-line charge model
+// src/sid/bus.rs — SID internal bus
 // =======================================================
 
-use super::constants::{
-	DATA_BUS_CHARGE_MAX, DATA_BUS_HOLD_CYCLES,
-};
+/* SID internal data-line retention model. */
+
+use super::constants::DATA_BUS_HOLD_CYCLES;
 
 #[derive(Clone, Copy, Debug)]
-/* The SID does not return a fixed value from write-only registers. Charge retained on its eight internal data lines remains observable for a finite time and then loses one bits independently, so the model stores charge per line rather than a single expiry timestamp. */
+/* The SID does not return a fixed value from write-only registers. Charge retained on its eight internal data lines remains observable for a finite time and then loses one bits independently. All lines are refreshed by the same bus drive, so their observable decay can be represented by one common age and the next line-expiry event. */
 pub struct InternalDataBus {
-	/* Logical level reconstructed from the lines whose stored charge has not yet decayed to zero. */
+	/* Logical level reconstructed from the lines whose retained charge has not yet decayed below the readable threshold. */
 	value: u8,
-	/* Per-line charge allows ones to disappear independently instead of expiring as one byte. */
-	line_charge: [u16; 8],
-	/* Carries fractional leakage between SID cycles so integer decay preserves the configured hold time. */
-	leak_phase: u32,
+	/* SID clocks elapsed since the most recent driven bus value. */
+	age: u32,
+	/* Age at which the next currently-high data line becomes unreadable. */
+	next_expiry: u32,
 }
 
 impl InternalDataBus {
 	pub const fn new() -> Self {
 		Self {
 			value: 0,
-			line_charge: [0; 8],
-			leak_phase: 0,
+			age: 0,
+			next_expiry: u32::MAX,
 		}
 	}
 
 	/* Reset removes all retained charge immediately, unlike ordinary decay, so subsequent reads start from a fully undriven bus rather than from the last written value. */
 	pub fn reset(&mut self) {
 		self.value = 0;
-		self.line_charge = [0; 8];
-		self.leak_phase = 0;
+		self.age = 0;
+		self.next_expiry = u32::MAX;
 	}
 
 	#[inline(always)]
-	/* A CPU write drives all eight lines at once: zero discharges a line immediately, while one restores it to full charge and restarts its independent decay. */
+	/* A CPU write drives all eight lines at once: zero discharges a line immediately, while one restores it to full charge and restarts that line retention interval. */
 	pub fn drive(&mut self, value: u8) {
 		self.value = value;
-		for bit in 0..8 {
-			self.line_charge[bit] = if value & (1 << bit) != 0 {
-				DATA_BUS_CHARGE_MAX
-			} else {
-				0
-			};
-		}
+		self.age = 0;
+		self.next_expiry = Self::next_expiry_for(value, 0);
 	}
 
 	#[inline(always)]
@@ -54,44 +49,52 @@ impl InternalDataBus {
 	}
 
 	#[inline(always)]
-	/* A write-only or unimplemented read samples the charge already present on the bus. The sampled byte is returned before the read halves the remaining charge, so the observed value and the post-read state remain distinct. */
-	pub fn read_floating(&mut self) -> u8 {
-		let observed = self.value;
-		for charge in &mut self.line_charge {
-			*charge /= 2;
-		}
-		self.rebuild_value();
-		observed
+	/* A write-only or unimplemented read samples the charge already present on the internal bus. Reading does not inject a second artificial decay step; the retained value fades only as the undriven bus ages with SID clocks (SID-SCHEMATICS-DATA-BUS). */
+	pub const fn read_floating(&self) -> u8 {
+		self.value
 	}
 
 	#[inline(always)]
-	/* Fractional leakage is accumulated so the configured hold time is preserved without requiring floating-point state or dropping sub-cycle decay. */
+	/* Retention intervals are threshold events: intermediate line charge is not otherwise observable through the digital register interface. Most SID clocks therefore only increment one age counter; per-line work occurs only when an expiry boundary is crossed. */
 	pub fn clock(&mut self) {
-		self.leak_phase = self.leak_phase.wrapping_add(u32::from(DATA_BUS_CHARGE_MAX));
-		let decrement = self.leak_phase / DATA_BUS_HOLD_CYCLES;
-		self.leak_phase %= DATA_BUS_HOLD_CYCLES;
-		if decrement == 0 {
+		if self.value == 0 {
 			return;
 		}
 
-		for charge in &mut self.line_charge {
-			*charge = charge.saturating_sub(decrement as u16);
+		self.age = self.age.saturating_add(1);
+		if self.age < self.next_expiry {
+			return;
 		}
-		self.rebuild_value();
-	}
 
-	#[inline(always)]
-	fn rebuild_value(&mut self) {
 		let mut retained = 0u8;
-		for bit in 0..8 {
-			if self.line_charge[bit] != 0 {
+		for (bit, hold_cycles) in DATA_BUS_HOLD_CYCLES.iter().copied().enumerate() {
+			if self.value & (1 << bit) != 0 && self.age < hold_cycles.max(1) {
 				retained |= 1 << bit;
 			}
 		}
-		self.value &= retained;
+		self.value = retained;
+		self.next_expiry = Self::next_expiry_for(retained, self.age);
+	}
+
+	#[inline(always)]
+	fn next_expiry_for(value: u8, age: u32) -> u32 {
+		let mut next = u32::MAX;
+		let mut bit = 0usize;
+		while bit < 8 {
+			if value & (1 << bit) != 0 {
+				let expiry = DATA_BUS_HOLD_CYCLES[bit].max(1);
+				if expiry > age && expiry < next {
+					next = expiry;
+				}
+			}
+			bit += 1;
+		}
+		next
 	}
 }
 
 impl Default for InternalDataBus {
-	fn default() -> Self { Self::new() }
+	fn default() -> Self {
+		Self::new()
+	}
 }

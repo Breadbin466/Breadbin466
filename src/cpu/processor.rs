@@ -2,10 +2,10 @@
 // src/cpu/processor.rs — MOS 6502/6510/8502 CPU core execution state
 // =======================================================
 
-use super::port::CpuPort;
 use super::bus::SystemBus;
-use super::decoder::{OpcodeInfo, Operation, AddressingMode};
 use super::constants::*;
+use super::decoder::{AddressingMode, OpcodeInfo, Operation};
+use super::port::CpuPort;
 
 /* The outer state distinguishes normal opcode execution from the fixed reset and interrupt bus sequences. A jammed NMOS opcode stops instruction progress but leaves the clocked component alive. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,10 +103,22 @@ impl Cpu {
 	pub fn new(model: CpuModel) -> Self {
 		Cpu {
 			model,
-			a: 0, x: 0, y: 0, sp: 0xFD, pc: 0, p: 0x24,
-			ir: 0, opcode_info: &OPCODES[0], t_state: 0, state: CpuState::ResetSequence,
-			addr_abs: 0, addr_lo: 0, addr_hi: 0,
-			op_val: 0, pointer: 0, page_crossed: false,
+			a: 0,
+			x: 0,
+			y: 0,
+			sp: 0xFD,
+			pc: 0,
+			p: 0x24,
+			ir: 0,
+			opcode_info: &OPCODES[0],
+			t_state: 0,
+			state: CpuState::ResetSequence,
+			addr_abs: 0,
+			addr_lo: 0,
+			addr_hi: 0,
+			op_val: 0,
+			pointer: 0,
+			page_crossed: false,
 			irq_line: false,
 			nmi_line: true,
 			nmi_pending: false,
@@ -225,14 +237,12 @@ impl Cpu {
 		let info = self.opcode_info;
 		let is_write = self.is_write_op(info.op);
 		match info.mode {
-			AddressingMode::Implied | AddressingMode::Accumulator => {
-				match info.op {
-					Operation::JSR => matches!(self.t_state, 3 | 4),
-					Operation::BRK => matches!(self.t_state, 2 | 3 | 4),
-					Operation::PHA | Operation::PHP => self.t_state == 2,
-					_ => false,
-				}
-			}
+			AddressingMode::Implied | AddressingMode::Accumulator => match info.op {
+				Operation::JSR => matches!(self.t_state, 3 | 4),
+				Operation::BRK => matches!(self.t_state, 2 | 3 | 4),
+				Operation::PHA | Operation::PHP => self.t_state == 2,
+				_ => false,
+			},
 			AddressingMode::Immediate => false,
 			AddressingMode::ZeroPage => match self.t_state {
 				2 => is_write,
@@ -301,7 +311,7 @@ impl Cpu {
 			CpuState::ResetSequence => self.sequence_reset(bus),
 			CpuState::IrqSequence => self.sequence_interrupt(bus, IRQ_VECTOR, false),
 			CpuState::NmiSequence => self.sequence_interrupt(bus, NMI_VECTOR, true),
-			CpuState::Jammed => {},
+			CpuState::Jammed => {}
 			CpuState::Running => self.sequence_running(bus),
 		}
 		if self.state == CpuState::Running && self.t_state != 0 {
@@ -335,7 +345,8 @@ impl Cpu {
 				self.branch_delays_int = false;
 				let nmi_eligible = !shadowed
 					&& self.nmi_pending
-					&& self.master_cycles >= self.nmi_clk.wrapping_add(INTERRUPT_DELAY + extra_delay);
+					&& self.master_cycles
+						>= self.nmi_clk.wrapping_add(INTERRUPT_DELAY + extra_delay);
 				if nmi_eligible {
 					self.state = CpuState::NmiSequence;
 					self.t_state = 0;
@@ -343,10 +354,7 @@ impl Cpu {
 					self.intr_nmi_latch = false;
 				/* Normal recognition requires I to have been clear at the sampling boundary. A just-executed CLI sets irq_enables so the newly cleared I flag does not take effect too early; a just-executed SEI sets irq_disables so an IRQ already recognised before I was set is still honoured. irq_delay covers the remaining one-instruction boundary cases. */
 				} else if self.intr_irq_latch
-					&& (
-						(self.p & I_FLAG) == 0 && !irq_enables
-						|| irq_disables
-					)
+					&& ((self.p & I_FLAG) == 0 && !irq_enables || irq_disables)
 					&& !irq_delay
 				{
 					self.state = CpuState::IrqSequence;
@@ -366,12 +374,34 @@ impl Cpu {
 	/* Reset performs discarded reads and three stack-page reads before fetching the reset vector; the stack pointer decrements without writing memory (MOS-6500-HARDWARE-1976, reset sequence). */
 	fn sequence_reset<B: SystemBus>(&mut self, bus: &mut B) {
 		match self.t_state {
-			0 => { let _ = self.read_byte(bus, self.pc, true); self.t_state += 1; },
-			1 => { let _ = self.read_byte(bus, 0x0100 | self.sp as u16, true); self.sp = self.sp.wrapping_sub(1); self.t_state += 1; },
-			2 => { let _ = self.read_byte(bus, 0x0100 | self.sp as u16, true); self.sp = self.sp.wrapping_sub(1); self.t_state += 1; },
-			3 => { let _ = self.read_byte(bus, 0x0100 | self.sp as u16, true); self.sp = self.sp.wrapping_sub(1); self.t_state += 1; },
-			4 => { let _ = self.read_byte(bus, self.pc, true); self.t_state += 1; },
-			5 => { self.addr_abs = self.read_byte(bus, RESET_VECTOR, true) as u16; self.p |= I_FLAG; self.t_state += 1; },
+			0 => {
+				let _ = self.read_byte(bus, self.pc, true);
+				self.t_state += 1;
+			}
+			1 => {
+				let _ = self.read_byte(bus, 0x0100 | self.sp as u16, true);
+				self.sp = self.sp.wrapping_sub(1);
+				self.t_state += 1;
+			}
+			2 => {
+				let _ = self.read_byte(bus, 0x0100 | self.sp as u16, true);
+				self.sp = self.sp.wrapping_sub(1);
+				self.t_state += 1;
+			}
+			3 => {
+				let _ = self.read_byte(bus, 0x0100 | self.sp as u16, true);
+				self.sp = self.sp.wrapping_sub(1);
+				self.t_state += 1;
+			}
+			4 => {
+				let _ = self.read_byte(bus, self.pc, true);
+				self.t_state += 1;
+			}
+			5 => {
+				self.addr_abs = self.read_byte(bus, RESET_VECTOR, true) as u16;
+				self.p |= I_FLAG;
+				self.t_state += 1;
+			}
 			6 => {
 				let hi = self.read_byte(bus, RESET_VECTOR.wrapping_add(1), true) as u16;
 				self.pc = (hi << 8) | self.addr_abs;
@@ -389,39 +419,43 @@ impl Cpu {
 			0 => {
 				let _ = self.read_byte(bus, self.pc, true);
 				self.t_state += 1;
-			},
+			}
 			1 => {
 				self.write_byte(bus, 0x0100 | self.sp as u16, (self.pc >> 8) as u8);
 				self.sp = self.sp.wrapping_sub(1);
 				self.t_state += 1;
-			},
+			}
 			2 => {
 				self.write_byte(bus, 0x0100 | self.sp as u16, (self.pc & 0xFF) as u8);
 				self.sp = self.sp.wrapping_sub(1);
 				self.t_state += 1;
-			},
+			}
 			3 => {
 				let status = (self.p | U_FLAG) & !B_FLAG;
 				self.write_byte(bus, 0x0100 | self.sp as u16, status);
 				self.sp = self.sp.wrapping_sub(1);
 				self.p |= I_FLAG;
 				self.t_state += 1;
-			},
+			}
 			4 => {
 				self.addr_abs = self.read_byte(bus, vector, true) as u16;
 				self.t_state += 1;
-			},
+			}
 			5 => {
 				let hi = self.read_byte(bus, vector.wrapping_add(1), true) as u16;
 				self.pc = (hi << 8) | self.addr_abs;
-				if is_nmi { self.nmi_pending = false; }
+				if is_nmi {
+					self.nmi_pending = false;
+				}
 				self.state = CpuState::Running;
 				self.t_state = 0;
 				self.irq_delay = false;
 				self.irq_disables = false;
 				self.irq_enables = false;
-			},
-			_ => { self.t_state = 0; }
+			}
+			_ => {
+				self.t_state = 0;
+			}
 		}
 	}
 
@@ -438,21 +472,47 @@ impl Cpu {
 	pub fn exec_op_read(&mut self, info: &OpcodeInfo) {
 		let val = self.op_val;
 		match info.op {
-			Operation::LDA => { self.a = val; self.update_nz(self.a); },
-			Operation::LDX => { self.x = val; self.update_nz(self.x); },
-			Operation::LDY => { self.y = val; self.update_nz(self.y); },
-			Operation::EOR => { self.a ^= val; self.update_nz(self.a); },
-			Operation::AND => { self.a &= val; self.update_nz(self.a); },
-			Operation::ORA => { self.a |= val; self.update_nz(self.a); },
+			Operation::LDA => {
+				self.a = val;
+				self.update_nz(self.a);
+			}
+			Operation::LDX => {
+				self.x = val;
+				self.update_nz(self.x);
+			}
+			Operation::LDY => {
+				self.y = val;
+				self.update_nz(self.y);
+			}
+			Operation::EOR => {
+				self.a ^= val;
+				self.update_nz(self.a);
+			}
+			Operation::AND => {
+				self.a &= val;
+				self.update_nz(self.a);
+			}
+			Operation::ORA => {
+				self.a |= val;
+				self.update_nz(self.a);
+			}
 			Operation::ADC => self.alu_adc(val),
 			Operation::SBC => self.alu_sbc(val),
 			Operation::CMP => self.alu_cmp(self.a, val),
 			Operation::CPX => self.alu_cmp(self.x, val),
 			Operation::CPY => self.alu_cmp(self.y, val),
 			Operation::BIT => self.alu_bit(val),
-			Operation::LAX => { self.a = val; self.x = val; self.update_nz(self.a); },
+			Operation::LAX => {
+				self.a = val;
+				self.x = val;
+				self.update_nz(self.a);
+			}
 			Operation::LXA => {
-				let magic = if self.model == CpuModel::Mos8502 { 0x00 } else { self.magic_lxa };
+				let magic = if self.model == CpuModel::Mos8502 {
+					0x00
+				} else {
+					self.magic_lxa
+				};
 				let old_z = self.p & Z_FLAG;
 				self.a = (self.a | magic) & val;
 				self.x = self.a;
@@ -461,22 +521,49 @@ impl Cpu {
 				if self.model == CpuModel::Mos8502 {
 					self.p = (self.p & !Z_FLAG) | old_z;
 				}
-			},
+			}
 			Operation::ANE => {
-				let magic = if self.model == CpuModel::Mos8502 { 0x00 } else { self.magic_ane };
+				let magic = if self.model == CpuModel::Mos8502 {
+					0x00
+				} else {
+					self.magic_ane
+				};
 				let old_z = self.p & Z_FLAG;
 				self.a = (self.a | magic) & self.x & val;
 				self.update_nz(self.a);
 				if self.model == CpuModel::Mos8502 {
 					self.p = (self.p & !Z_FLAG) | old_z;
 				}
-			},
-			Operation::ANC => { self.a &= val; self.update_nz(self.a); if (self.a & 0x80) != 0 { self.p |= C_FLAG; } else { self.p &= !C_FLAG; } },
-			Operation::ALR => { self.a &= val; if (self.a & 0x01) != 0 { self.p |= C_FLAG; } else { self.p &= !C_FLAG; } self.a >>= 1; self.update_nz(self.a); },
+			}
+			Operation::ANC => {
+				self.a &= val;
+				self.update_nz(self.a);
+				if (self.a & 0x80) != 0 {
+					self.p |= C_FLAG;
+				} else {
+					self.p &= !C_FLAG;
+				}
+			}
+			Operation::ALR => {
+				self.a &= val;
+				if (self.a & 0x01) != 0 {
+					self.p |= C_FLAG;
+				} else {
+					self.p &= !C_FLAG;
+				}
+				self.a >>= 1;
+				self.update_nz(self.a);
+			}
 			Operation::ARR => self.alu_arr(val),
 			Operation::AXS => self.alu_axs(val),
-			Operation::LAS => { let res = self.sp & val; self.a = res; self.x = res; self.sp = res; self.update_nz(res); },
-			Operation::NOP => {},
+			Operation::LAS => {
+				let res = self.sp & val;
+				self.a = res;
+				self.x = res;
+				self.sp = res;
+				self.update_nz(res);
+			}
+			Operation::NOP => {}
 			_ => {}
 		}
 	}
@@ -489,14 +576,43 @@ impl Cpu {
 			Operation::STX => self.x,
 			Operation::STY => self.y,
 			Operation::SAX => self.a & self.x,
-			Operation::SHY => if self.model == CpuModel::Mos8502 { 0x00 } else { self.y & self.addr_hi.wrapping_add(1) },
-			Operation::SHX => if self.model == CpuModel::Mos8502 { 0x00 } else { self.x & self.addr_hi.wrapping_add(1) },
-			Operation::AHX => if self.model == CpuModel::Mos8502 { 0x00 } else { self.a & self.x & self.addr_hi.wrapping_add(1) },
-			Operation::TAS => { self.sp = self.a & self.x; if self.model == CpuModel::Mos8502 { 0x00 } else { self.sp & self.addr_hi.wrapping_add(1) } },
+			Operation::SHY => {
+				if self.model == CpuModel::Mos8502 {
+					0x00
+				} else {
+					self.y & self.addr_hi.wrapping_add(1)
+				}
+			}
+			Operation::SHX => {
+				if self.model == CpuModel::Mos8502 {
+					0x00
+				} else {
+					self.x & self.addr_hi.wrapping_add(1)
+				}
+			}
+			Operation::AHX => {
+				if self.model == CpuModel::Mos8502 {
+					0x00
+				} else {
+					self.a & self.x & self.addr_hi.wrapping_add(1)
+				}
+			}
+			Operation::TAS => {
+				self.sp = self.a & self.x;
+				if self.model == CpuModel::Mos8502 {
+					0x00
+				} else {
+					self.sp & self.addr_hi.wrapping_add(1)
+				}
+			}
 			_ => 0,
 		};
 
-		let final_addr = if matches!(info.op, Operation::SHY | Operation::SHX | Operation::AHX | Operation::TAS) && self.page_crossed {
+		let final_addr = if matches!(
+			info.op,
+			Operation::SHY | Operation::SHX | Operation::AHX | Operation::TAS
+		) && self.page_crossed
+		{
 			val &= (self.addr_abs >> 8) as u8;
 			self.addr_abs
 		} else {
@@ -535,7 +651,16 @@ impl Cpu {
 
 	/* This classification covers pure store operations only. Read-modify-write and stack cycles are identified separately from their current t_state. */
 	pub fn is_write_op(&self, op: Operation) -> bool {
-		matches!(op, Operation::STA | Operation::STX | Operation::STY | Operation::SAX
-			| Operation::AHX | Operation::SHX | Operation::SHY | Operation::TAS)
+		matches!(
+			op,
+			Operation::STA
+				| Operation::STX
+				| Operation::STY
+				| Operation::SAX
+				| Operation::AHX
+				| Operation::SHX
+				| Operation::SHY
+				| Operation::TAS
+		)
 	}
 }

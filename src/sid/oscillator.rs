@@ -1,23 +1,24 @@
 // =======================================================
-// src/sid/oscillator.rs — MOS 6581R4AR oscillator core
+// src/sid/oscillator.rs — SID oscillator
 // =======================================================
 
+/* SID oscillator, waveform-line, noise and synchronisation state. */
+
 use super::constants::{
-	COMBINED_WAVEFORM_MSB_CLEAR_MASK, NOISE_EVENT_MASK, NOISE_MASK,
-	NOISE_OUTPUT_TAPS, NOISE_RESET_VALUE, NOISE_TEST_CHARGE_MAX,
-	NOISE_TEST_LEAK_INTERVAL_CYCLES, NOISE_TEST_LOGIC_THRESHOLD, PHASE_MASK,
-	NEVER, PHASE_RESET_VALUE, SYNC_EVENT_MASK, WAVEFORM_FLOAT_CHARGE_MAX,
-	WAVEFORM_FLOAT_HOLD_CYCLES, WAVEFORM_FLOAT_LEAK_INTERVAL_CYCLES,
+	COMBINED_WAVEFORM_MSB_CLEAR_MASK, NEVER, NOISE_EVENT_MASK, NOISE_MASK, NOISE_OUTPUT_TAPS,
+	NOISE_RESET_VALUE, NOISE_TEST_CHARGE_MAX, NOISE_TEST_LEAK_INTERVAL_CYCLES,
+	NOISE_TEST_LOGIC_THRESHOLD, PHASE_MASK, PHASE_RESET_VALUE, SYNC_EVENT_MASK,
+	WAVEFORM_FLOAT_CHARGE_MAX, WAVEFORM_FLOAT_HOLD_CYCLES, WAVEFORM_FLOAT_LEAK_INTERVAL_CYCLES,
 	WAVEFORM_FLOAT_THRESHOLD, WAVEFORM_MASK, WAVEFORM_PIPELINE_RESET_VALUE,
 };
-use super::waveforms::{triangle_from_phase, GeneratedWaveShapes};
+use super::waveforms::{GeneratedWaveShapes, triangle_from_phase};
 
-#[derive(Clone, Copy)]#[repr(transparent)]
+#[derive(Clone, Copy)]
+#[repr(transparent)]
 /* The four waveform control bits select analogue line drivers rather than mutually exclusive digital functions. Several selections interact on shared lines, while no selection exposes the decaying waveform bus. */
 struct WaveformSelect(u8);
 
 impl WaveformSelect {
-
 	const fn from_raw(raw: u8) -> Self {
 		Self(raw & 0x0f)
 	}
@@ -62,7 +63,6 @@ impl WaveformSelect {
 
 /* Noise is a 23-stage LFSR whose selected stages drive the twelve waveform lines. Clocking, TEST-mode charge leakage and combined-waveform pull-downs are modelled separately because each can alter a different snapshot of the register. */
 struct NoiseGenerator {
-
 	state: u32,
 
 	visible: u16,
@@ -170,7 +170,9 @@ impl NoiseGenerator {
 
 		let interval = u64::from(NOISE_TEST_LEAK_INTERVAL_CYCLES);
 		let elapsed_steps = ((cycle - self.next_leak) / interval) + 1;
-		self.next_leak = self.next_leak.wrapping_add(elapsed_steps.wrapping_mul(interval));
+		self.next_leak = self
+			.next_leak
+			.wrapping_add(elapsed_steps.wrapping_mul(interval));
 
 		let mut changed = false;
 		let mut step = 0u64;
@@ -222,16 +224,13 @@ impl NoiseGenerator {
 			if affects_capture {
 				let captured_charge = self.captured_charge[index];
 				let captured_decrement = (captured_charge / 12).max(1);
-				self.captured_charge[index] =
-					captured_charge.saturating_sub(captured_decrement);
+				self.captured_charge[index] = captured_charge.saturating_sub(captured_decrement);
 			}
 
 			if self.charge[index] < NOISE_TEST_LOGIC_THRESHOLD {
 				self.state &= !(1u32 << index);
 			}
-			if affects_capture
-				&& self.captured_charge[index] < NOISE_TEST_LOGIC_THRESHOLD
-			{
+			if affects_capture && self.captured_charge[index] < NOISE_TEST_LOGIC_THRESHOLD {
 				self.captured &= !(1u32 << index);
 			}
 		}
@@ -286,7 +285,9 @@ impl FloatingBus {
 			};
 		}
 		self.hold_until = cycle.wrapping_add(u64::from(WAVEFORM_FLOAT_HOLD_CYCLES));
-		self.next_leak = self.hold_until.wrapping_add(u64::from(WAVEFORM_FLOAT_LEAK_INTERVAL_CYCLES));
+		self.next_leak = self
+			.hold_until
+			.wrapping_add(u64::from(WAVEFORM_FLOAT_LEAK_INTERVAL_CYCLES));
 	}
 
 	fn reset(&mut self) {
@@ -304,7 +305,9 @@ impl FloatingBus {
 
 		let interval = u64::from(WAVEFORM_FLOAT_LEAK_INTERVAL_CYCLES);
 		let elapsed_steps = ((cycle - self.next_leak) / interval) + 1;
-		self.next_leak = self.next_leak.wrapping_add(elapsed_steps.wrapping_mul(interval));
+		self.next_leak = self
+			.next_leak
+			.wrapping_add(elapsed_steps.wrapping_mul(interval));
 
 		let mut step = 0u64;
 		while step < elapsed_steps {
@@ -331,8 +334,7 @@ impl FloatingBus {
 	}
 }
 
-/* Each oscillator couples a 24-bit phase accumulator, pulse comparator, waveform line network, floating bus and 23-stage noise generator. The modulator relationship is supplied by the enclosing SID because sync and ring modulation form a three-voice ring rather than independent channels. */
-/* Oscillator combines the 24-bit phase accumulator, pulse comparator, noise shift register, TEST discharge behaviour, combined-waveform feedback and readback latch. Shared signal lines make their state transitions mutually observable rather than independent generators. */
+/* Each oscillator combines a 24-bit phase accumulator, pulse comparator, waveform line network, floating bus, 23-stage noise generator, TEST discharge behaviour, combined-waveform feedback and readback latch. The enclosing SID supplies the modulator relationship because sync and ring modulation form a mutually observable three-voice ring rather than independent generators. */
 pub struct Oscillator {
 	pub accumulator: u32,
 	pub frequency: u16,
@@ -400,8 +402,7 @@ impl Oscillator {
 		self.pulse_width = (self.pulse_width & 0x00ff) | ((u16::from(value) & 0x0f) << 8);
 	}
 
-	/* CONTROL changes waveform selection, TEST, ring modulation and hard sync together. TEST also resets phase and changes the electrical behaviour of the noise register, so its edges require explicit transition handling. */
-	/* CONTROL changes waveform selection and the TEST, RING and SYNC paths together. Entering or leaving TEST also starts timed transitions in the phase and noise circuits. */
+	/* CONTROL changes waveform selection and the TEST, RING and SYNC paths together. TEST resets phase, changes the electrical behaviour of the noise register and starts timed transitions when its state changes. */
 	pub fn write_control(&mut self, value: u8) {
 		let old_test = self.test_enabled;
 		let old_wave = self.waveform;
@@ -427,8 +428,7 @@ impl Oscillator {
 	}
 
 	#[inline]
-	/* Frequency is added once per SID clock. The XOR with the previous accumulator records every rising phase bit needed by sync and by the delayed noise clock. */
-	/* Advances the phase accumulator and records newly rising bits before waveform evaluation. The captured bit-19 edge clocks the noise transfer path, while bit 23 participates in hard sync. */
+	/* Frequency is added once per SID clock and newly rising phase bits are captured before waveform evaluation. Bit 19 clocks the delayed noise-transfer path, while bit 23 participates in hard sync. */
 	pub fn clock_accumulator(&mut self) {
 		self.cycle = self.cycle.wrapping_add(1);
 
@@ -450,8 +450,7 @@ impl Oscillator {
 	}
 
 	#[inline]
-	/* Combined waveforms can pull selected noise-register taps low. The feedback is applied after waveform evaluation so it affects later noise state rather than the code already observed this cycle. */
-	/* Combined waveforms load shared oscillator lines back into the noise and floating-bus networks after the visible waveform code has been resolved. */
+	/* Combined waveforms feed resolved oscillator lines back into the noise and floating-bus networks after waveform evaluation, so the feedback affects later state rather than the code already observed this cycle. */
 	pub fn apply_combined_feedback(&mut self, output: u16) {
 		let selection = WaveformSelect::from_raw(self.waveform);
 		if selection.has(0x02) && selection.is_combined() && output & 0x0800 == 0 {
@@ -461,8 +460,7 @@ impl Oscillator {
 	}
 
 	#[inline]
-	/* Hard sync resets the phase path while leaving the programmed frequency and waveform controls intact. */
-	/* Hard sync clears phase only; frequency, TEST state and the noise generator continue from their existing state. */
+	/* Hard sync clears phase only; programmed frequency, waveform controls, TEST state and the noise generator continue from their existing state. */
 	pub fn synchronise(&mut self) {
 		self.reset_phase();
 	}
@@ -496,8 +494,7 @@ impl Oscillator {
 	}
 
 	#[inline]
-	/* The latched code feeds OSC3 reads and becomes the starting charge when the waveform drivers are later disabled. */
-	/* OSC3 reads the latched top eight bits rather than recomputing the current waveform from the live accumulator. */
+	/* The latched code feeds OSC3 reads instead of recomputing the live waveform and becomes the starting charge when the waveform drivers are later disabled. */
 	pub fn latch_output(&mut self, output: u16) {
 		let latched = output & WAVEFORM_MASK;
 		let sel = WaveformSelect::from_raw(self.waveform);
@@ -565,7 +562,6 @@ impl Oscillator {
 			ideal & WAVEFORM_MASK
 		}
 	}
-
 }
 
 impl Default for Oscillator {

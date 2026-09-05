@@ -2,10 +2,10 @@
 // src/motherboard/bus.rs — Core Motherboard Bus and Chip Interconnection
 // =======================================================
 
-use crate::motherboard::constants::{CPU_FREQ_HZ, THRESHOLD, NEGATIVE_RANGE, POSITIVE_RANGE};
+use crate::emulator::Result;
+use crate::motherboard::constants::{CPU_FREQ_HZ, NEGATIVE_RANGE, POSITIVE_RANGE, THRESHOLD};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use crate::emulator::Result;
 
 use crate::cia::{Cia1, Cia2};
 use crate::clockchip::constants::CYCLES_PER_FRAME;
@@ -15,7 +15,7 @@ use crate::cpu::{Cpu, CpuModel};
 use crate::fdd1541::{DriveStatus, DriveWorker};
 use crate::iec::IecBus;
 use crate::memory::Memory;
-use crate::sid::{constants::CLOCK_FREQUENCY_HZ, AudioRateConverter};
+use crate::sid::{AudioRateConverter, constants::CLOCK_FREQUENCY_HZ};
 use crate::vic::VicII;
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +37,10 @@ pub enum DriveMode {
  * execution into an unbounded trace.
  */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DebugBusAccessKind { Read, Write }
+pub enum DebugBusAccessKind {
+	Read,
+	Write,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct DebugBusAccess {
@@ -58,7 +61,12 @@ impl<const CAPTURE_ACCESS: bool> SystemBus for CpuBus<'_, CAPTURE_ACCESS> {
 	fn read(&mut self, addr: u16, cycle: u64) -> u8 {
 		let value = self.memory.cpu_read(addr, cycle, self.vic);
 		if CAPTURE_ACCESS {
-			*self.debug_access = Some(DebugBusAccess { kind: DebugBusAccessKind::Read, addr, value, cycle });
+			*self.debug_access = Some(DebugBusAccess {
+				kind: DebugBusAccessKind::Read,
+				addr,
+				value,
+				cycle,
+			});
 		}
 		value
 	}
@@ -67,7 +75,12 @@ impl<const CAPTURE_ACCESS: bool> SystemBus for CpuBus<'_, CAPTURE_ACCESS> {
 	fn write(&mut self, addr: u16, value: u8, cycle: u64) {
 		self.memory.cpu_write(addr, value, cycle, self.vic);
 		if CAPTURE_ACCESS {
-			*self.debug_access = Some(DebugBusAccess { kind: DebugBusAccessKind::Write, addr, value, cycle });
+			*self.debug_access = Some(DebugBusAccess {
+				kind: DebugBusAccessKind::Write,
+				addr,
+				value,
+				cycle,
+			});
 		}
 	}
 }
@@ -126,7 +139,9 @@ impl Motherboard {
 				CLOCK_FREQUENCY_HZ,
 				f64::from(audio_sample_rate.round().clamp(8_000.0, 192_000.0) as u32),
 			),
-			audio_buffer_storage: Vec::with_capacity(((audio_sample_rate.max(8_000.0) as usize + 49) / 50) + 64),
+			audio_buffer_storage: Vec::with_capacity(
+				((audio_sample_rate.max(8_000.0) as usize + 49) / 50) + 64,
+			),
 			debug_last_cpu_access: None,
 		};
 		motherboard.drive_status = motherboard.drive_worker.reset();
@@ -135,6 +150,44 @@ impl Motherboard {
 
 	pub fn current_cycle(&self) -> u64 {
 		self.clock.total_cycles
+	}
+
+	/* The 1351 is an external control-port peripheral. Desktop code can attach it
+	 * and feed relative motion without acquiring direct access to SID or CIA state. */
+	pub fn set_mouse_1351_connected(&mut self, connected: bool) {
+		let cycle = self.clock.total_cycles;
+		let port_a_pins = self.memory.cia1.port_a_pin_levels();
+		self.memory
+			.mouse1351
+			.set_connected(connected, cycle, port_a_pins);
+		if !connected {
+			self.memory.sid.pot_x = 0xFF;
+			self.memory.sid.pot_y = 0xFF;
+		}
+	}
+
+	pub fn mouse_1351_connected(&self) -> bool {
+		self.memory.mouse1351.is_connected()
+	}
+
+	pub fn move_mouse_1351(&mut self, dx: i32, dy: i32) {
+		self.memory.mouse1351.move_relative(dx, dy);
+	}
+
+	pub fn set_mouse_1351_left_button(&mut self, pressed: bool) {
+		self.memory.mouse1351.set_left_pressed(pressed);
+	}
+
+	pub fn set_mouse_1351_right_button(&mut self, pressed: bool) {
+		self.memory.mouse1351.set_right_pressed(pressed);
+	}
+
+	pub fn release_mouse_1351_buttons(&mut self) {
+		self.memory.mouse1351.release_buttons();
+	}
+
+	pub fn mouse_1351_digital_mask(&self) -> u8 {
+		self.memory.mouse1351.digital_port_mask()
 	}
 
 	pub fn init_roms(&mut self) -> Result<()> {
@@ -196,6 +249,9 @@ impl Motherboard {
 		self.memory.reset(true);
 		self.memory.cia1.reset();
 		self.memory.cia2.reset();
+		self.memory
+			.mouse1351
+			.reset_bus_selection(completed_cycle, self.memory.cia1.port_a_pin_levels());
 		self.vic.reset();
 		self.iec.reset();
 		self.last_drive_device_state = 0;
@@ -203,7 +259,8 @@ impl Motherboard {
 		self.drive_status = self.drive_worker.hard_reset(completed_cycle, host_state);
 		self.clock.reset();
 		self.cpu_clock_cycles = 0;
-		self.iec.set_device_connected(self.drive_mode != DriveMode::Off, 0);
+		self.iec
+			.set_device_connected(self.drive_mode != DriveMode::Off, 0);
 		self.audio_rate_converter.reset();
 		{
 			let cpu = &mut self.cpu;
@@ -222,6 +279,10 @@ impl Motherboard {
 		self.memory.reset(false);
 		self.memory.cia1.reset();
 		self.memory.cia2.reset();
+		let cycle = self.clock.total_cycles;
+		self.memory
+			.mouse1351
+			.reset_bus_selection(cycle, self.memory.cia1.port_a_pin_levels());
 		self.cpu.assert_reset();
 		self.audio_rate_converter.reset();
 		self.audio_buffer_storage.clear();
@@ -234,7 +295,8 @@ impl Motherboard {
 		}
 
 		self.drive_mode = mode;
-		self.iec.set_device_connected(mode != DriveMode::Off, self.clock.total_cycles);
+		self.iec
+			.set_device_connected(mode != DriveMode::Off, self.clock.total_cycles);
 		self.last_drive_device_state = 0;
 		self.drive_worker.set_connected(mode != DriveMode::Off);
 		self.drive_status = self.drive_worker.reset();
@@ -267,9 +329,15 @@ impl Motherboard {
 	}
 
 	/* Unmounting ejects the medium inside the drive worker without disconnecting the IEC device itself. */
-	pub fn unmount_drive(&mut self) {
-		let (_, status) = self.drive_worker.unmount();
+	pub fn unmount_drive(&mut self) -> bool {
+		let (unmounted, status) = self.drive_worker.unmount();
 		self.drive_status = status;
+		unmounted
+	}
+
+	/* Application teardown can request one explicit media flush while the motherboard is still alive, making a final persistence failure observable before DriveWorker performs its own destruction-time retry. */
+	pub fn flush_drive_media(&mut self) -> bool {
+		self.drive_worker.flush_media()
 	}
 
 	pub fn drive_busy_led(&self) -> bool {
@@ -281,7 +349,9 @@ impl Motherboard {
 	}
 
 	pub fn drive_current_track(&self) -> Option<u8> {
-		(self.drive_mode != DriveMode::Off).then_some(self.drive_status.current_track).flatten()
+		(self.drive_mode != DriveMode::Off)
+			.then_some(self.drive_status.current_track)
+			.flatten()
 	}
 
 	pub fn drive_pc(&self) -> Option<u16> {
@@ -289,7 +359,11 @@ impl Motherboard {
 	}
 
 	pub fn drive_error_string(&self) -> &str {
-		if self.drive_mode == DriveMode::Off { "" } else { &self.drive_status.error_string }
+		if self.drive_mode == DriveMode::Off {
+			""
+		} else {
+			&self.drive_status.error_string
+		}
 	}
 
 	pub fn load_cartridge(&mut self, path: &Path) -> Result<()> {
@@ -310,7 +384,9 @@ impl Motherboard {
 		let end_addr = end_exclusive as u16;
 		let mut offset = 0usize;
 		while offset < content.len() {
-			self.memory.ram.write(load_addr.wrapping_add(offset as u16), content[offset]);
+			self.memory
+				.ram
+				.write(load_addr.wrapping_add(offset as u16), content[offset]);
 			offset += 1;
 		}
 		if load_addr == 0x0801 {
@@ -357,7 +433,9 @@ impl Motherboard {
 		let master_cycles = self.cpu_clock_cycles;
 		self.refresh_drive_status();
 		let dpc = self.drive_pc();
-		self.vic.telemetry.update_report(ctrl1, sprite_en, current_pc, master_cycles, dpc);
+		self.vic
+			.telemetry
+			.update_report(ctrl1, sprite_en, current_pc, master_cycles, dpc);
 	}
 
 	#[inline(always)]
@@ -367,13 +445,15 @@ impl Motherboard {
 		}
 		let Some(raw_sample) = self.memory.tick_sid() else {
 			return;
-		};      if let Some(sample) = self.audio_rate_converter.accept_cycle_sample(raw_sample) {
+		};
+
+		if let Some(sample) = self.audio_rate_converter.accept_cycle_sample(raw_sample) {
 			self.audio_buffer_storage.push(soft_clip_audio(sample));
 		}
 	}
 
 	/* tick_base advances every device that can influence bus ownership or interrupt
-	   inputs before either the CPU or the REU is allowed to use the current cycle. */
+	inputs before either the CPU or the REU is allowed to use the current cycle. */
 	#[inline(always)]
 	fn tick_base<const REU_ENABLED: bool>(&mut self) -> BusAvailability {
 		let cycle = self.clock.total_cycles.wrapping_add(1);
@@ -402,7 +482,8 @@ impl Motherboard {
 			self.vic.telemetry.irq_edge_count = self.vic.telemetry.irq_edge_count.wrapping_add(1);
 		}
 		self.cpu.set_irq_line(irq_active);
-		self.cpu.set_nmi_line(!(cia_nmi || self.memory.cartridge.nmi_low));
+		self.cpu
+			.set_nmi_line(!(cia_nmi || self.memory.cartridge.nmi_low));
 		availability
 	}
 
@@ -427,13 +508,22 @@ impl Motherboard {
 	 * cycle.
 	 */
 	#[inline(always)]
-	fn tick_cycle_with_access_capture<const CAPTURE_ACCESS: bool, const REU_ENABLED: bool>(&mut self) {
+	fn tick_cycle_with_access_capture<const CAPTURE_ACCESS: bool, const REU_ENABLED: bool>(
+		&mut self,
+	) {
 		let availability = self.tick_base::<REU_ENABLED>();
 		let cycle = self.clock.total_cycles;
-		let reu_owns_cycle = REU_ENABLED && self.memory.run_reu_cycle(availability.ba_high, cycle, &mut self.vic);
+		let reu_owns_cycle = REU_ENABLED
+			&& self
+				.memory
+				.run_reu_cycle(availability.ba_high, cycle, &mut self.vic);
 		if !reu_owns_cycle {
 			let cpu = &mut self.cpu;
-			let mut bus = CpuBus::<CAPTURE_ACCESS> { memory: &mut self.memory, vic: &mut self.vic, debug_access: &mut self.debug_last_cpu_access };
+			let mut bus = CpuBus::<CAPTURE_ACCESS> {
+				memory: &mut self.memory,
+				vic: &mut self.vic,
+				debug_access: &mut self.debug_last_cpu_access,
+			};
 			cpu.tick(&mut bus, availability.ba_high);
 		}
 		self.render_sid_cycle();
@@ -460,16 +550,30 @@ impl Motherboard {
 	}
 
 	#[cold]
-	fn tick_cycle_c128_debug_with_access_capture<const CAPTURE_ACCESS: bool, const REU_ENABLED: bool>(&mut self) {
+	fn tick_cycle_c128_debug_with_access_capture<
+		const CAPTURE_ACCESS: bool,
+		const REU_ENABLED: bool,
+	>(
+		&mut self,
+	) {
 		let availability = self.tick_base::<REU_ENABLED>();
 		let allow_2mhz = self.memory.c128_8502_control & 1 != 0 && self.vic.c128_2mhz_allowed();
 		if allow_2mhz {
 			self.cpu_clock_cycles = self.cpu_clock_cycles.wrapping_add(1);
 		}
-		let reu_owns_cycle = REU_ENABLED && self.memory.run_reu_cycle(availability.ba_high, self.clock.total_cycles, &mut self.vic);
+		let reu_owns_cycle = REU_ENABLED
+			&& self.memory.run_reu_cycle(
+				availability.ba_high,
+				self.clock.total_cycles,
+				&mut self.vic,
+			);
 		if !reu_owns_cycle {
 			let cpu = &mut self.cpu;
-			let mut bus = CpuBus::<CAPTURE_ACCESS> { memory: &mut self.memory, vic: &mut self.vic, debug_access: &mut self.debug_last_cpu_access };
+			let mut bus = CpuBus::<CAPTURE_ACCESS> {
+				memory: &mut self.memory,
+				vic: &mut self.vic,
+				debug_access: &mut self.debug_last_cpu_access,
+			};
 			cpu.tick(&mut bus, availability.ba_high);
 			if allow_2mhz {
 				let pins = cpu.port.get_pins();
@@ -510,15 +614,22 @@ impl Motherboard {
 	pub fn set_c128_debug_enabled(&mut self, enabled: bool) {
 		self.memory.c128_2mhz_debug_enabled = enabled;
 		self.memory.c128_8502_control = 0;
-		self.cpu.model = if enabled { CpuModel::Mos8502 } else { CpuModel::Mos6510 };
+		self.cpu.model = if enabled {
+			CpuModel::Mos8502
+		} else {
+			CpuModel::Mos6510
+		};
 	}
-
 }
+/* The motherboard limiter is a final host-domain safety margin, not a gain stage. Samples below the knee pass unchanged; only exceptional excursions are compressed smoothly towards the signed PCM limits. */
 fn soft_clip_audio(sample: i32) -> f32 {
-
-	let amplified = i64::from(sample) * 3 / 2;
-	let range = if amplified < 0 { NEGATIVE_RANGE } else { POSITIVE_RANGE };
-	let magnitude = amplified.unsigned_abs() as f64;
+	let sample = i64::from(sample);
+	let range = if sample < 0 {
+		NEGATIVE_RANGE
+	} else {
+		POSITIVE_RANGE
+	};
+	let magnitude = sample.unsigned_abs() as f64;
 	let limited = if magnitude < THRESHOLD as f64 {
 		magnitude
 	} else {
@@ -528,6 +639,6 @@ fn soft_clip_audio(sample: i32) -> f32 {
 		THRESHOLD as f64 + remaining_ratio * (normalised / remaining_ratio).tanh() * range
 	};
 
-	let signed = if amplified < 0 { -limited } else { limited };
+	let signed = if sample < 0 { -limited } else { limited };
 	(signed / range) as f32
 }

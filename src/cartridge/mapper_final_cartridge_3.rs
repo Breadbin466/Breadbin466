@@ -2,10 +2,10 @@
 // src/cartridge/mapper_final_cartridge_3.rs — Final Cartridge III
 // =======================================================
 
-use super::mapper_interface::{CartridgeMapper, LineState, MapperType, CartridgeInfo};
-use super::bus_configuration::CartridgeMode;
 use super::bank_storage::BankStorage;
+use super::bus_configuration::CartridgeMode;
 use super::crt_layout::add_bank_split;
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 /* FinalCartridge3Mapper models banked ROM, control-register line outputs and delayed freeze behaviour. Its mapping can differ by clock phase, matching hardware that decodes cartridge signals around PHI2. */
 pub struct FinalCartridge3Mapper {
@@ -94,23 +94,37 @@ impl CartridgeMapper for FinalCartridge3Mapper {
 	}
 
 	fn read_roml(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.roml.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 	fn peek_roml(&self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.roml.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_romh(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.romh.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.romh
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 	fn peek_romh(&self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.romh.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.romh
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_io(&mut self, addr: u16, _cycle: u64) -> Option<u8> {
 		match addr {
-			0xDE00..=0xDEFF => self.roml.get_resolved(self.bank).map(|data| data[0x1E00 + (addr & 0xFF) as usize]),
-			0xDF00..=0xDFFF => self.roml.get_resolved(self.bank).map(|data| data[0x1F00 + (addr & 0xFF) as usize]),
+			0xDE00..=0xDEFF => self
+				.roml
+				.get_resolved(self.bank)
+				.map(|data| data[0x1E00 + (addr & 0xFF) as usize]),
+			0xDF00..=0xDFFF => self
+				.roml
+				.get_resolved(self.bank)
+				.map(|data| data[0x1F00 + (addr & 0xFF) as usize]),
 			_ => None,
 		}
 	}

@@ -12,7 +12,8 @@ use super::vic_access::VICMemoryController;
 use crate::cartridge::Cartridge;
 use crate::cia::{Cia1, Cia2};
 use crate::iec::IecBus;
-use crate::pla::cpu_map::{build_read_page_map, build_write_selection_map, CpuWriteSelection};
+use crate::mouse1351::Mouse1351;
+use crate::pla::cpu_map::{CpuWriteSelection, build_read_page_map, build_write_selection_map};
 use crate::reu::{Reu, ReuBusAction};
 use crate::sid::Mos6581;
 use crate::vic::VicII;
@@ -29,6 +30,7 @@ pub struct Memory {
 	pub cia1: Cia1,
 	pub cia2: Cia2,
 	pub sid: Mos6581,
+	pub mouse1351: Mouse1351,
 	pub iec: Rc<IecBus>,
 	pub soft_reset_requested: bool,
 	pub last_cpu_port_pins: u8,
@@ -50,7 +52,11 @@ impl Memory {
 	pub fn new(cia1: Cia1, cia2: Cia2, iec: Rc<IecBus>, active_crt: Option<PathBuf>) -> Self {
 		let mut cartridge = Cartridge::new();
 		let mounted_initial_crt = active_crt.filter(|path| path.exists()).and_then(|path| {
-			if cartridge.mount(&path).is_ok() { Some(path) } else { None }
+			if cartridge.mount(&path).is_ok() {
+				Some(path)
+			} else {
+				None
+			}
 		});
 		let initial_port = 0x37;
 		let initial_game = cartridge.game;
@@ -66,6 +72,7 @@ impl Memory {
 			cia1,
 			cia2,
 			sid: Mos6581::new(),
+			mouse1351: Mouse1351::new(),
 			iec,
 			soft_reset_requested: false,
 			last_cpu_port_pins: 0x37,
@@ -88,7 +95,9 @@ impl Memory {
 
 	#[inline(always)]
 	fn capture_cartridge_map_change(&mut self) {
-		if self.cartridge.take_lines_changed() { self.map_dirty = true; }
+		if self.cartridge.take_lines_changed() {
+			self.map_dirty = true;
+		}
 	}
 
 	/* Only LORAM, HIRAM, CHAREN, GAME and EXROM affect these cached CPU maps. Rebuilding by page keeps the hot read/write path free of repeated PLA evaluation. */
@@ -118,16 +127,28 @@ impl Memory {
 
 	#[cold]
 	fn c128_adjust_vic_read(&self, addr: u16, value: u8, vic: &VicII) -> u8 {
-		if self.c128_8502_control & 1 != 0 && vic.c128_2mhz_allowed() && addr == 0xD012 && vic.timing.cycle == 1 {
+		if self.c128_8502_control & 1 != 0
+			&& vic.c128_2mhz_allowed()
+			&& addr == 0xD012
+			&& vic.timing.cycle == 1
+		{
 			value.wrapping_sub(1)
-		} else { value }
+		} else {
+			value
+		}
 	}
 
 	#[cold]
 	fn c128_adjust_cia_read(&self, addr: u16, value: u8, vic: &VicII) -> u8 {
-		if self.c128_8502_control & 1 != 0 && vic.c128_2mhz_allowed() && matches!(addr & 0x0F, 0x04 | 0x05) && vic.timing.cycle == 1 {
+		if self.c128_8502_control & 1 != 0
+			&& vic.c128_2mhz_allowed()
+			&& matches!(addr & 0x0F, 0x04 | 0x05)
+			&& vic.timing.cycle == 1
+		{
 			value.wrapping_sub(1)
-		} else { value }
+		} else {
+			value
+		}
 	}
 
 	pub fn load_system_roms(&mut self) -> crate::emulator::Result<()> {
@@ -141,10 +162,11 @@ impl Memory {
 		Ok(())
 	}
 
-	pub fn detach_cartridge(&mut self) {
+	pub fn detach_cartridge(&mut self) -> std::io::Result<()> {
+		self.cartridge.detach()?;
 		self.initial_crt_path = None;
-		self.cartridge.detach();
 		self.mark_memory_map_dirty();
+		Ok(())
 	}
 
 	#[inline(always)]
@@ -186,49 +208,105 @@ impl Memory {
 			MapRegion::Basic => self.rom.read_basic(addr - BASIC_ROM_START),
 			MapRegion::Kernal => self.rom.read_kernal(addr - KERNAL_ROM_START),
 			MapRegion::Char => self.rom.read_char((addr - CHAR_ROM_START) & 0x0FFF),
-			MapRegion::ColorRam => self.color_ram.read_low_nibble(addr) | (self.bus_state.get_floating(cycle) & 0xF0),
+			MapRegion::ColorRam => {
+				self.color_ram.read_low_nibble(addr) | (self.bus_state.get_floating(cycle) & 0xF0)
+			}
 			MapRegion::Io => match addr {
 				0xD000..=0xD3FF => {
 					if self.c128_2mhz_debug_enabled {
-						if addr == 0xD030 { self.c128_8502_control }
-						else { let value = vic.read_register(addr); self.c128_adjust_vic_read(addr, value, vic) }
-					} else { vic.read_register(addr) }
+						if addr == 0xD030 {
+							self.c128_8502_control
+						} else {
+							let value = vic.read_register(addr);
+							self.c128_adjust_vic_read(addr, value, vic)
+						}
+					} else {
+						vic.read_register(addr)
+					}
 				}
-				0xD505 => if self.c128_2mhz_debug_enabled { self.c128_8502_control } else { 0 },
-				0xD400..=0xD7FF => self.sid.read(addr),
+				0xD505 => {
+					if self.c128_2mhz_debug_enabled {
+						self.c128_8502_control
+					} else {
+						0
+					}
+				}
+				0xD400..=0xD7FF => {
+					if matches!(addr & 0x001F, 0x19 | 0x1A) {
+						if let Some((pot_x, pot_y)) = self.mouse1351.pot_values(cycle) {
+							self.sid.pot_x = pot_x;
+							self.sid.pot_y = pot_y;
+						}
+					}
+					self.sid.read(addr)
+				}
 				0xDC00..=0xDCFF => {
 					let value = self.cia1.read(addr);
-					if self.c128_2mhz_debug_enabled { self.c128_adjust_cia_read(addr, value, vic) } else { value }
+					if self.c128_2mhz_debug_enabled {
+						self.c128_adjust_cia_read(addr, value, vic)
+					} else {
+						value
+					}
 				}
 				0xDD00..=0xDDFF => {
 					let value = self.cia2.read(addr);
-					if self.c128_2mhz_debug_enabled { self.c128_adjust_cia_read(addr, value, vic) } else { value }
+					if self.c128_2mhz_debug_enabled {
+						self.c128_adjust_cia_read(addr, value, vic)
+					} else {
+						value
+					}
 				}
 				0xDE00..=0xDFFF => {
 					if self.reu.enabled && addr >= 0xDF00 && addr <= 0xDF0A {
 						self.reu.read(addr)
 					} else {
-						let floating = if self.c128_2mhz_debug_enabled { 0xFF } else { self.bus_state.get_floating(cycle) };
-						let value = self.cartridge.read_io_bus(addr, cycle).resolve(floating).unwrap_or(floating);
+						let floating = if self.c128_2mhz_debug_enabled {
+							0xFF
+						} else {
+							self.bus_state.get_floating(cycle)
+						};
+						let value = self
+							.cartridge
+							.read_io_bus(addr, cycle)
+							.resolve(floating)
+							.unwrap_or(floating);
 						self.capture_cartridge_map_change();
 						value
 					}
 				}
-				_ => if self.c128_2mhz_debug_enabled { 0xFF } else { self.bus_state.get_floating(cycle) },
+				_ => {
+					if self.c128_2mhz_debug_enabled {
+						0xFF
+					} else {
+						self.bus_state.get_floating(cycle)
+					}
+				}
 			},
 			MapRegion::RomL => {
-				let value = self.cartridge.read_roml(addr & 0x1FFF, cycle).unwrap_or(self.bus_state.get_floating(cycle));
+				let value = self
+					.cartridge
+					.read_roml(addr & 0x1FFF, cycle)
+					.unwrap_or(self.bus_state.get_floating(cycle));
 				self.capture_cartridge_map_change();
 				self.sync_memory_map(cpu_port_pins);
 				value
-			},
+			}
 			MapRegion::RomH => {
-				let value = self.cartridge.read_romh(addr & 0x1FFF, cycle).unwrap_or(self.bus_state.get_floating(cycle));
+				let value = self
+					.cartridge
+					.read_romh(addr & 0x1FFF, cycle)
+					.unwrap_or(self.bus_state.get_floating(cycle));
 				self.capture_cartridge_map_change();
 				self.sync_memory_map(cpu_port_pins);
 				value
-			},
-			MapRegion::Floating | MapRegion::Ultimax => if self.c128_2mhz_debug_enabled { 0xFF } else { self.bus_state.get_floating(cycle) },
+			}
+			MapRegion::Floating | MapRegion::Ultimax => {
+				if self.c128_2mhz_debug_enabled {
+					0xFF
+				} else {
+					self.bus_state.get_floating(cycle)
+				}
+			}
 		};
 		self.bus_state.update(value, cycle);
 		value
@@ -263,7 +341,11 @@ impl Memory {
 					}
 				}
 				0xD400..=0xD7FF => self.sid.write(addr, value),
-				0xDC00..=0xDCFF => self.cia1.write(addr, value),
+				0xDC00..=0xDCFF => {
+					self.cia1.write(addr, value);
+					self.mouse1351
+						.observe_port_selection(self.cia1.port_a_pin_levels(), cycle);
+				}
 				0xDD00..=0xDDFF => self.cia2.write(addr, value, cycle),
 				0xDE00..=0xDFFF => {
 					if self.reu.enabled && addr >= 0xDF00 && addr <= 0xDF0A {
@@ -322,25 +404,41 @@ impl Memory {
 				0xD400..=0xD7FF => 0xFF,
 				0xDC00..=0xDCFF => self.cia1.peek(addr),
 				0xDD00..=0xDDFF => self.cia2.peek(addr),
-				0xDF00..=0xDF0A if self.reu.enabled => self.reu.debug_register((addr & 0x0F) as usize),
+				0xDF00..=0xDF0A if self.reu.enabled => {
+					self.reu.debug_register((addr & 0x0F) as usize)
+				}
 				0xDE00..=0xDFFF => self.cartridge.debug_peek_io(addr, cycle).unwrap_or(0xFF),
 				_ => 0xFF,
 			},
-			MapRegion::RomL => self.cartridge.debug_peek_roml(addr & 0x1FFF, cycle).unwrap_or(0xFF),
-			MapRegion::RomH => self.cartridge.debug_peek_romh(addr & 0x1FFF, cycle).unwrap_or(0xFF),
+			MapRegion::RomL => self
+				.cartridge
+				.debug_peek_roml(addr & 0x1FFF, cycle)
+				.unwrap_or(0xFF),
+			MapRegion::RomH => self
+				.cartridge
+				.debug_peek_romh(addr & 0x1FFF, cycle)
+				.unwrap_or(0xFF),
 			MapRegion::Floating | MapRegion::Ultimax => 0xFF,
 		}
 	}
 
 	#[inline(always)]
-	pub fn read_ram(&self, addr: u16) -> u8 { self.ram.read(addr) }
+	pub fn read_ram(&self, addr: u16) -> u8 {
+		self.ram.read(addr)
+	}
 	#[inline(always)]
-	pub fn read_color_ram(&self, addr: u16) -> u8 { self.color_ram.read_low_nibble(addr) }
-	pub fn get_vic_bank(&self) -> u8 { self.cia2.vic_bank() }
+	pub fn read_color_ram(&self, addr: u16) -> u8 {
+		self.color_ram.read_low_nibble(addr)
+	}
+	pub fn get_vic_bank(&self) -> u8 {
+		self.cia2.vic_bank()
+	}
 
 	pub fn reset(&mut self, hard_reset: bool) {
 		self.bus_state.reset();
-		self.cartridge.save_associated_nvram();
+		if let Err(error) = self.cartridge.save_associated_nvram() {
+			eprintln!("[CARTRIDGE] Failed to persist cartridge NVRAM before reset: {error}");
+		}
 		self.reu.reset(hard_reset);
 		if hard_reset {
 			self.ram.clear();

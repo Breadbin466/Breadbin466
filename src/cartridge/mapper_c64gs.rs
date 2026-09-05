@@ -2,8 +2,8 @@
 // src/cartridge/mapper_c64gs.rs — C64 Games System cartridge mapper
 // =======================================================
 
-use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 use super::bank_storage::BankStorage;
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 /* C64GSMapper exposes a banked ROML image intended for cartridge-only systems. IO1 writes select a bank while the expansion port remains in the 8 KiB game configuration. */
 pub struct C64GSMapper {
@@ -30,11 +30,15 @@ impl CartridgeMapper for C64GSMapper {
 	}
 
 	fn read_roml(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.roml.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn peek_roml(&self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.roml.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_romh(&mut self, _offset: u16, _cycle: u64) -> Option<u8> {

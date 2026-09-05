@@ -6,7 +6,8 @@ use super::constants::PAL_TOD_INPUT_PERIOD_CYCLES;
 
 /* Scheduler tracks the motherboard master-cycle count and derives the 50 Hz TOD input supplied to both CIAs from the PAL cycle stream. */
 pub struct Scheduler {
-	pub total_cycles: u64,  pub tod_counter: u32,
+	pub total_cycles: u64,
+	pub tod_counter: u32,
 	pub tod_period: u32,
 }
 
@@ -36,5 +37,4 @@ impl Scheduler {
 			false
 		}
 	}
-
 }

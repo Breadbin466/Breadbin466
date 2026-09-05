@@ -2,15 +2,17 @@
 // src/ui/history.rs — Split history lists and configuration
 // =======================================================
 
+use crate::motherboard::bus::DriveMode;
 use crate::ui::constants::{MAX_RECENT, SAVE_DEBOUNCE_SECS};
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
-use std::time::{Instant, Duration};
-use serde::{Serialize, Deserialize};
-use crate::motherboard::bus::DriveMode;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+	true
+}
 
 /* History combines recent-file lists with persistent UI and media preferences. Runtime bookkeeping fields are excluded from serialisation so disk state describes user choices rather than the debounce mechanism itself. */
 #[derive(Serialize, Deserialize)]
@@ -27,6 +29,8 @@ pub struct History {
 	pub mute_enabled: bool,
 	#[serde(default = "default_true")]
 	pub osd_enabled: bool,
+	#[serde(default)]
+	pub display_uptime: bool,
 	#[serde(default = "default_true")]
 	pub debug_menu_visible: bool,
 	#[serde(default)]
@@ -58,6 +62,7 @@ impl Default for History {
 			active_tap: None,
 			mute_enabled: false,
 			osd_enabled: true,
+			display_uptime: false,
 			debug_menu_visible: true,
 			drive_mode: DriveMode::default(),
 			custom_char_rom: None,
@@ -90,7 +95,8 @@ impl History {
 
 	/* Recent files are partitioned by media type, deduplicated and moved to the front. Persistence is debounced because several related UI actions may update history in quick succession. */
 	pub fn add(&mut self, path: PathBuf) {
-		let ext = path.extension()
+		let ext = path
+			.extension()
 			.and_then(|e| e.to_str())
 			.unwrap_or("")
 			.to_lowercase();
@@ -98,7 +104,9 @@ impl History {
 		match ext.as_str() {
 			"crt" => Self::add_to_list(&mut self.crt_files, path),
 			"prg" => Self::add_to_list(&mut self.prg_files, path),
-			"d64" | "g64" | "nib" | "nbz" => Self::add_to_list(&mut self.d64_g64_files, path),
+			"d64" | "d7z" | "g64" | "nib" | "nbz" => {
+				Self::add_to_list(&mut self.d64_g64_files, path)
+			}
 			"tap" => Self::add_to_list(&mut self.tap_files, path),
 			_ => {}
 		}
@@ -155,9 +163,7 @@ impl History {
 	/* Debouncing marks state dirty immediately but avoids rewriting the configuration file more often than the configured interval. Explicit media-state changes can still force a write. */
 	fn save_debounced(&mut self) {
 		self.dirty = true;
-		let elapsed = self.last_save
-			.map(|t| t.elapsed())
-			.unwrap_or(Duration::MAX);
+		let elapsed = self.last_save.map(|t| t.elapsed()).unwrap_or(Duration::MAX);
 		if elapsed >= Duration::from_secs(SAVE_DEBOUNCE_SECS) {
 			self.write_to_disk();
 		}
@@ -185,8 +191,16 @@ impl History {
 		self.save_forced();
 	}
 
-	pub fn get_crt(&self, index: usize) -> Option<PathBuf> { self.crt_files.get(index).cloned() }
-	pub fn get_prg(&self, index: usize) -> Option<PathBuf> { self.prg_files.get(index).cloned() }
-	pub fn get_d64_g64(&self, index: usize) -> Option<PathBuf> { self.d64_g64_files.get(index).cloned() }
-	pub fn get_tap(&self, index: usize) -> Option<PathBuf> { self.tap_files.get(index).cloned() }
+	pub fn get_crt(&self, index: usize) -> Option<PathBuf> {
+		self.crt_files.get(index).cloned()
+	}
+	pub fn get_prg(&self, index: usize) -> Option<PathBuf> {
+		self.prg_files.get(index).cloned()
+	}
+	pub fn get_d64_g64(&self, index: usize) -> Option<PathBuf> {
+		self.d64_g64_files.get(index).cloned()
+	}
+	pub fn get_tap(&self, index: usize) -> Option<PathBuf> {
+		self.tap_files.get(index).cloned()
+	}
 }

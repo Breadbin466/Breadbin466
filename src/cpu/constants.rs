@@ -26,11 +26,11 @@ pub const NEVER_PULLED_DOWN: u64 = u64::MAX - FADE_CYCLES;
 const fn build_rmw_bitmap() -> [u32; 8] {
 	let mut map = [0u32; 8];
 	let opcodes = [
-		0x06, 0x16, 0x0E, 0x1E, 0x46, 0x56, 0x4E, 0x5E, 0x26, 0x36, 0x2E, 0x3E, 0x66, 0x76, 0x6E, 0x7E,
-		0xC6, 0xD6, 0xCE, 0xDE, 0xE6, 0xF6, 0xEE, 0xFE, 0x07, 0x17, 0x0F, 0x1F, 0x03, 0x13, 0x1B, 0x27,
-		0x37, 0x2F, 0x3F, 0x23, 0x33, 0x3B, 0x47, 0x57, 0x4F, 0x5F, 0x43, 0x53, 0x5B, 0x67, 0x77, 0x6F,
-		0x7F, 0x63, 0x73, 0x7B, 0xC7, 0xD7, 0xCF, 0xDF, 0xC3, 0xD3, 0xDB, 0xE7, 0xF7, 0xEF, 0xFF, 0xE3,
-		0xF3, 0xFB,
+		0x06, 0x16, 0x0E, 0x1E, 0x46, 0x56, 0x4E, 0x5E, 0x26, 0x36, 0x2E, 0x3E, 0x66, 0x76, 0x6E,
+		0x7E, 0xC6, 0xD6, 0xCE, 0xDE, 0xE6, 0xF6, 0xEE, 0xFE, 0x07, 0x17, 0x0F, 0x1F, 0x03, 0x13,
+		0x1B, 0x27, 0x37, 0x2F, 0x3F, 0x23, 0x33, 0x3B, 0x47, 0x57, 0x4F, 0x5F, 0x43, 0x53, 0x5B,
+		0x67, 0x77, 0x6F, 0x7F, 0x63, 0x73, 0x7B, 0xC7, 0xD7, 0xCF, 0xDF, 0xC3, 0xD3, 0xDB, 0xE7,
+		0xF7, 0xEF, 0xFF, 0xE3, 0xF3, 0xFB,
 	];
 	let mut i = 0;
 	while i < opcodes.len() {
@@ -72,7 +72,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* 0D */ op!("ORA", ORA, Absolute, false),
 	/* 0E */ op!("ASL", ASL, Absolute, false),
 	/* 0F */ op!("SLO", SLO, Absolute, true),
-
 	/* 10 */ op!("BPL", BPL, Relative, false),
 	/* 11 */ op!("ORA", ORA, IndirectIndexed, false),
 	/* 12 */ KIL,
@@ -89,7 +88,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* 1D */ op!("ORA", ORA, AbsoluteX, false),
 	/* 1E */ op!("ASL", ASL, AbsoluteX, false),
 	/* 1F */ op!("SLO", SLO, AbsoluteX, true),
-
 	/* 20 */ op!("JSR", JSR, Absolute, false),
 	/* 21 */ op!("AND", AND, IndexedIndirect, false),
 	/* 22 */ KIL,
@@ -106,7 +104,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* 2D */ op!("AND", AND, Absolute, false),
 	/* 2E */ op!("ROL", ROL, Absolute, false),
 	/* 2F */ op!("RLA", RLA, Absolute, true),
-
 	/* 30 */ op!("BMI", BMI, Relative, false),
 	/* 31 */ op!("AND", AND, IndirectIndexed, false),
 	/* 32 */ KIL,
@@ -123,7 +120,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* 3D */ op!("AND", AND, AbsoluteX, false),
 	/* 3E */ op!("ROL", ROL, AbsoluteX, false),
 	/* 3F */ op!("RLA", RLA, AbsoluteX, true),
-
 	/* 40 */ op!("RTI", RTI, Implied, false),
 	/* 41 */ op!("EOR", EOR, IndexedIndirect, false),
 	/* 42 */ KIL,
@@ -140,7 +136,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* 4D */ op!("EOR", EOR, Absolute, false),
 	/* 4E */ op!("LSR", LSR, Absolute, false),
 	/* 4F */ op!("SRE", SRE, Absolute, true),
-
 	/* 50 */ op!("BVC", BVC, Relative, false),
 	/* 51 */ op!("EOR", EOR, IndirectIndexed, false),
 	/* 52 */ KIL,
@@ -157,7 +152,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* 5D */ op!("EOR", EOR, AbsoluteX, false),
 	/* 5E */ op!("LSR", LSR, AbsoluteX, false),
 	/* 5F */ op!("SRE", SRE, AbsoluteX, true),
-
 	/* 60 */ op!("RTS", RTS, Implied, false),
 	/* 61 */ op!("ADC", ADC, IndexedIndirect, false),
 	/* 62 */ KIL,
@@ -174,7 +168,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* 6D */ op!("ADC", ADC, Absolute, false),
 	/* 6E */ op!("ROR", ROR, Absolute, false),
 	/* 6F */ op!("RRA", RRA, Absolute, true),
-
 	/* 70 */ op!("BVS", BVS, Relative, false),
 	/* 71 */ op!("ADC", ADC, IndirectIndexed, false),
 	/* 72 */ KIL,
@@ -191,7 +184,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* 7D */ op!("ADC", ADC, AbsoluteX, false),
 	/* 7E */ op!("ROR", ROR, AbsoluteX, false),
 	/* 7F */ op!("RRA", RRA, AbsoluteX, true),
-
 	/* 80 */ op!("NOP", NOP, Immediate, true),
 	/* 81 */ op!("STA", STA, IndexedIndirect, false),
 	/* 82 */ op!("NOP", NOP, Immediate, true),
@@ -208,7 +200,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* 8D */ op!("STA", STA, Absolute, false),
 	/* 8E */ op!("STX", STX, Absolute, false),
 	/* 8F */ op!("SAX", SAX, Absolute, true),
-
 	/* 90 */ op!("BCC", BCC, Relative, false),
 	/* 91 */ op!("STA", STA, IndirectIndexed, false),
 	/* 92 */ KIL,
@@ -225,7 +216,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* 9D */ op!("STA", STA, AbsoluteX, false),
 	/* 9E */ op!("SHX", SHX, AbsoluteY, true),
 	/* 9F */ op!("AHX", AHX, AbsoluteY, true),
-
 	/* A0 */ op!("LDY", LDY, Immediate, false),
 	/* A1 */ op!("LDA", LDA, IndexedIndirect, false),
 	/* A2 */ op!("LDX", LDX, Immediate, false),
@@ -242,7 +232,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* AD */ op!("LDA", LDA, Absolute, false),
 	/* AE */ op!("LDX", LDX, Absolute, false),
 	/* AF */ op!("LAX", LAX, Absolute, true),
-
 	/* B0 */ op!("BCS", BCS, Relative, false),
 	/* B1 */ op!("LDA", LDA, IndirectIndexed, false),
 	/* B2 */ KIL,
@@ -259,7 +248,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* BD */ op!("LDA", LDA, AbsoluteX, false),
 	/* BE */ op!("LDX", LDX, AbsoluteY, false),
 	/* BF */ op!("LAX", LAX, AbsoluteY, true),
-
 	/* C0 */ op!("CPY", CPY, Immediate, false),
 	/* C1 */ op!("CMP", CMP, IndexedIndirect, false),
 	/* C2 */ op!("NOP", NOP, Immediate, true),
@@ -276,7 +264,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* CD */ op!("CMP", CMP, Absolute, false),
 	/* CE */ op!("DEC", DEC, Absolute, false),
 	/* CF */ op!("DCP", DCP, Absolute, true),
-
 	/* D0 */ op!("BNE", BNE, Relative, false),
 	/* D1 */ op!("CMP", CMP, IndirectIndexed, false),
 	/* D2 */ KIL,
@@ -293,7 +280,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* DD */ op!("CMP", CMP, AbsoluteX, false),
 	/* DE */ op!("DEC", DEC, AbsoluteX, false),
 	/* DF */ op!("DCP", DCP, AbsoluteX, true),
-
 	/* E0 */ op!("CPX", CPX, Immediate, false),
 	/* E1 */ op!("SBC", SBC, IndexedIndirect, false),
 	/* E2 */ op!("NOP", NOP, Immediate, true),
@@ -310,7 +296,6 @@ pub const OPCODES: [OpcodeInfo; 256] = [
 	/* ED */ op!("SBC", SBC, Absolute, false),
 	/* EE */ op!("INC", INC, Absolute, false),
 	/* EF */ op!("ISC", ISC, Absolute, true),
-
 	/* F0 */ op!("BEQ", BEQ, Relative, false),
 	/* F1 */ op!("SBC", SBC, IndirectIndexed, false),
 	/* F2 */ KIL,

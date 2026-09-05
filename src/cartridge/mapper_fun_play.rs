@@ -2,8 +2,8 @@
 // src/cartridge/mapper_fun_play.rs — Fun Play cartridge mapper
 // =======================================================
 
-use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 use super::bank_storage::BankStorage;
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 /* FunPlayMapper decodes a sparse IO1 register layout into bank bits and a disable latch. The mapper preserves the original bit wiring instead of flattening it into a sequential bank index. */
 pub struct FunPlayMapper {
@@ -36,14 +36,18 @@ impl CartridgeMapper for FunPlayMapper {
 		if self.off {
 			return None;
 		}
-		self.roml.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn peek_roml(&self, offset: u16, _cycle: u64) -> Option<u8> {
 		if self.off {
 			return None;
 		}
-		self.roml.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_romh(&mut self, _offset: u16, _cycle: u64) -> Option<u8> {
@@ -83,9 +87,9 @@ impl CartridgeMapper for FunPlayMapper {
 	fn write_rom(&mut self, _addr: u16, _value: u8, _cycle: u64) {}
 
 	fn add_bank(&mut self, bank: usize, addr: u16, data: &[u8]) {
-
 		let logical_bank = ((bank >> 3) & 7) | ((bank & 1) << 3);
-		self.roml.store_bank(logical_bank, data, (addr & 0x1FFF) as usize);
+		self.roml
+			.store_bank(logical_bank, data, (addr & 0x1FFF) as usize);
 	}
 
 	/* The register can electrically detach the cartridge as well as select a bank, so line publication follows the decoded disable state. */

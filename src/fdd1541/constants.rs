@@ -5,8 +5,7 @@
 /* The drive CPU runs at 1 MHz while the internal mechanism timeline uses sixteen master ticks per CPU cycle. */
 pub(crate) const DRIVE_CPU_FREQ_HZ: u32 = 1_000_000;
 pub(crate) const GCR_ENCODE: [u8; 16] = [
-	0x0A, 0x0B, 0x12, 0x13, 0x0E, 0x0F, 0x16, 0x17,
-	0x09, 0x19, 0x1A, 0x1B, 0x0D, 0x1D, 0x1E, 0x15,
+	0x0A, 0x0B, 0x12, 0x13, 0x0E, 0x0F, 0x16, 0x17, 0x09, 0x19, 0x1A, 0x1B, 0x0D, 0x1D, 0x1E, 0x15,
 ];
 /* The event ring is a power of two so monotonically increasing counters can select slots with a mask while still detecting fullness from their distance. */
 pub(crate) const DRIVE_RING_CAPACITY: usize = 65_536;
@@ -57,9 +56,6 @@ pub(crate) const NIB_TRACK_LENGTH: usize = 0x2000;
 pub(crate) const NIB_HALF_TRACK_COUNT: usize = 84;
 pub(crate) const NIB_TRACK_BYTES_MIN: [usize; 4] = [6_183, 6_598, 7_073, 7_616];
 pub(crate) const NIB_TRACK_BYTES_MAX: [usize; 4] = [6_311, 6_726, 7_201, 7_824];
-pub(crate) const NIB_TRACK_BYTES_TOLERANCE: usize = 150;
-pub(crate) const NIB_CYCLE_SIGNATURE_BYTES: usize = 8;
-pub(crate) const NIB_FORMATTED_GCR_RUN_BYTES: usize = 64;
 pub(crate) const NIB_MAX_DECOMPRESSED_LENGTH: usize =
 	NIB_HEADER_LENGTH + NIB_TRACK_LENGTH * NIB_HALF_TRACK_COUNT;
 /* Each packed IEC state bit records whether one participant actively pulls a line or exposes a derived handshake condition. Physical line levels are resolved separately as wired-AND signals. */

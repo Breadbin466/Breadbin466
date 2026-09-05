@@ -18,10 +18,13 @@ pub(super) fn restore_media(driver: &mut Orchestrator, cli_has_disk: bool, cli_h
 	}
 	if !cli_has_tap {
 		if let Some(path) = driver.context.history.active_tap.clone() {
-			if let Ok(data) = std::fs::read(&path) {
-				if !driver.context.datassette.load_tap(data, path) {
-					eprintln!("[TAPE] Failed to load TAP image");
-				}
+			let restored = std::fs::read(&path)
+				.ok()
+				.is_some_and(|data| driver.context.datassette.load_tap(data, path));
+			if !restored {
+				eprintln!("[TAPE] Failed to restore TAP image");
+				driver.context.history.active_tap = None;
+				driver.context.history.save_forced();
 			}
 		}
 	}

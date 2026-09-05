@@ -167,18 +167,25 @@ impl Timer {
 	}
 
 	#[inline(always)]
-	fn started(&self) -> bool { (self.cr & CR_START) != 0 }
+	fn started(&self) -> bool {
+		(self.cr & CR_START) != 0
+	}
 
 	#[inline(always)]
-	fn one_shot(&self) -> bool { (self.cr & CR_RUNMODE) != 0 }
+	fn one_shot(&self) -> bool {
+		(self.cr & CR_RUNMODE) != 0
+	}
 
 	#[inline(always)]
-	fn uses_phi2(&self) -> bool { self.phi2_selected }
+	fn uses_phi2(&self) -> bool {
+		self.phi2_selected
+	}
 
 	#[inline(always)]
 	/* A queued external edge and a completed PHI2 start delay become the same abstract decrement request. */
 	fn advance_counter_clock(&mut self) {
-		let decrement_now = self.counter_clock.start_delay_elapsed() || (self.cnt_edge_pending && self.started());
+		let decrement_now =
+			self.counter_clock.start_delay_elapsed() || (self.cnt_edge_pending && self.started());
 		let start_delay = self.started() && self.uses_phi2();
 		self.cnt_edge_pending = false;
 		self.counter_clock = match (decrement_now, start_delay) {
@@ -203,7 +210,11 @@ impl Timer {
 		let mut load_counter_now = self.counter_load.transfers_this_cycle();
 		let one_shot_was_armed = self.run_mode == RunModeState::OneShotArmed;
 		let one_shot_selected = self.one_shot();
-		self.run_mode = if one_shot_selected { RunModeState::OneShotArmed } else { RunModeState::Continuous };
+		self.run_mode = if one_shot_selected {
+			RunModeState::OneShotArmed
+		} else {
+			RunModeState::Continuous
+		};
 		self.pb_pulse = false;
 
 		let underflow = self.counter_clock.decrements_this_cycle() && self.counter == 0;
@@ -231,7 +242,9 @@ impl Timer {
 	/* Timer A may count CNT events and Timer B may use CNT or Timer A underflows as its count source (MOS-6526-1981, Interval Timers). */
 	/* External count events are queued into the clock pipeline. They do not decrement the counter directly, which keeps CNT-driven and PHI2-driven operation on the same timing path. */
 	pub fn observe_cnt_edge(&mut self) {
-		if self.started() { self.cnt_edge_pending = true; }
+		if self.started() {
+			self.cnt_edge_pending = true;
+		}
 	}
 
 	#[inline(always)]
@@ -241,15 +254,21 @@ impl Timer {
 		let was_started = self.started();
 		self.cr = value & !CR_LOAD;
 		self.phi2_selected = phi2_selected;
-		if (value & CR_START) != 0 && !was_started { self.toggle = true; }
-		if (value & CR_LOAD) != 0 { self.counter_load = self.counter_load.request(); }
+		if (value & CR_START) != 0 && !was_started {
+			self.toggle = true;
+		}
+		if (value & CR_LOAD) != 0 {
+			self.counter_load = self.counter_load.request();
+		}
 	}
 
 	#[inline(always)]
 	/* Writing the low byte changes only the latch. The running counter is left untouched until a load event transfers the complete 16-bit value. */
 	pub fn write_latch_lo(&mut self, value: u8) {
 		self.latch = (self.latch & 0xFF00) | u16::from(value);
-		if self.counter_load.transfers_this_cycle() { self.counter = (self.counter & 0xFF00) | u16::from(value); }
+		if self.counter_load.transfers_this_cycle() {
+			self.counter = (self.counter & 0xFF00) | u16::from(value);
+		}
 	}
 
 	#[inline(always)]
@@ -278,6 +297,10 @@ impl Timer {
 	#[inline(always)]
 	/* A timer output may produce either a one-cycle underflow pulse or a level that toggles on every underflow (MOS-6526-1981, Timer Output to Port B). */
 	pub fn timer_output(&self) -> bool {
-		if (self.cr & CR_OUTMODE) != 0 { self.toggle } else { self.pb_pulse }
+		if (self.cr & CR_OUTMODE) != 0 {
+			self.toggle
+		} else {
+			self.pb_pulse
+		}
 	}
 }

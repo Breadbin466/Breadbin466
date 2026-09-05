@@ -2,200 +2,468 @@
 // src/cartridge/mapper_gmod2.rs — GMod2 cartridge and serial EEPROM
 // =======================================================
 
-use super::mapper_interface::{CartridgeMapper, LineState, CartridgeInfo, MapperType};
-use super::bus_configuration::IoRead;
 use super::bank_storage::BankStorage;
+use super::bus_configuration::IoRead;
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, ChipType, LineState, MapperType};
+
+const EEPROM_BYTES: usize = 2048;
+const EEPROM_WORDS: u16 = 1024;
+const EEPROM_ADDRESS_BITS: u8 = 10;
+const EEPROM_WORD_BITS: u8 = 16;
+const EEPROM_PROGRAM_BUSY_CYCLES: u64 = 3_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/* EepromMode follows the serial transaction from command reception through address capture and byte transfer. Mode changes occur only while chip select keeps one transaction active. */
-enum EepromMode { Idle, ReadCommand, ReadAddress, ReadData, WriteAddress, WriteData }
+/* The M93C86 is wired for x16 organisation on GMod2, so transactions address 1024 words and transfer one 16-bit word at a time. */
+enum EepromMode {
+	Idle,
+	Command,
+	Read,
+	WriteData,
+	WriteAllData,
+	Status,
+}
 
-/* Gmod2Eeprom models the small serial non-volatile memory as an edge-driven protocol machine. Chip select frames a transaction, rising clock edges shift command or data bits, and the output line is sampled through the cartridge I/O bus. */
+/*
+GMod2 connects an M93C86 EEPROM in x16 organisation to three bits of the $DE00 control register. CS frames a MICROWIRE transaction, DI is sampled on rising clock edges, and DO changes during reads so software can sample it through bit 7 of $DE00. The write-enable latch survives CS transitions and is changed only by EWEN/EWDS commands.
+
+The byte array remains the persistence format because CRT and sidecar data are byte-oriented. Word addresses are converted explicitly to big-endian byte pairs at the EEPROM boundary; serial transfers themselves remain MSB-first as specified by the device protocol.
+*/
 struct Gmod2Eeprom {
-	last_sck: bool, last_cs: bool, bit_counter: u8, command_byte: u8,
-	address_byte: u16, mode: EepromMode, data_buffer: u8,
-	pub storage: [u8; 512],
+	storage: [u8; EEPROM_BYTES],
+	mode: EepromMode,
+	last_cs: bool,
+	last_clock: bool,
+	started: bool,
+	opcode: u8,
+	address: u16,
+	input_bits: u8,
+	input_word: u16,
+	output_word: u16,
+	output_bits: u8,
+	data_out: bool,
+	write_enabled: bool,
+	programming_until: Option<u64>,
 }
 
 impl Gmod2Eeprom {
 	fn new() -> Self {
 		Self {
-			last_sck: true, last_cs: true, bit_counter: 0, command_byte: 0,
-			address_byte: 0, mode: EepromMode::Idle, data_buffer: 0,
-			storage: [0xFF; 512],
+			storage: [0xFF; EEPROM_BYTES],
+			mode: EepromMode::Idle,
+			last_cs: false,
+			last_clock: false,
+			started: false,
+			opcode: 0,
+			address: 0,
+			input_bits: 0,
+			input_word: 0,
+			output_word: 0,
+			output_bits: 0,
+			data_out: false,
+			write_enabled: false,
+			programming_until: None,
 		}
 	}
 
 	fn reset(&mut self) {
-		self.last_sck = true; self.last_cs = true; self.bit_counter = 0;
-		self.command_byte = 0; self.address_byte = 0; self.mode = EepromMode::Idle;
-		self.data_buffer = 0;
+		self.mode = EepromMode::Idle;
+		self.last_cs = false;
+		self.last_clock = false;
+		self.started = false;
+		self.opcode = 0;
+		self.address = 0;
+		self.input_bits = 0;
+		self.input_word = 0;
+		self.output_word = 0;
+		self.output_bits = 0;
+		self.data_out = false;
+		self.write_enabled = false;
+		self.programming_until = None;
 	}
 
-	fn process_pins(&mut self, ctrl: u8) -> u8 {
-		let cs = (ctrl & 0x01) != 0;
-		let sck = (ctrl & 0x02) != 0;
-		let mosi = (ctrl & 0x04) != 0;
+	#[inline(always)]
+	fn read_word(&self, address: u16) -> u16 {
+		let index = ((address % EEPROM_WORDS) as usize) * 2;
+		u16::from_be_bytes([self.storage[index], self.storage[index + 1]])
+	}
 
-		if !cs {
-			self.mode = EepromMode::Idle;
-			self.bit_counter = 0;
-			self.last_cs = cs;
-			self.last_sck = sck;
-			return 0x00;
+	#[inline(always)]
+	fn write_word(&mut self, address: u16, value: u16) {
+		let index = ((address % EEPROM_WORDS) as usize) * 2;
+		let [high, low] = value.to_be_bytes();
+		self.storage[index] = high;
+		self.storage[index + 1] = low;
+	}
+
+	fn begin_transaction(&mut self, cycle: u64) {
+		self.started = false;
+		self.opcode = 0;
+		self.address = 0;
+		self.input_bits = 0;
+		self.input_word = 0;
+		self.output_word = 0;
+		self.output_bits = 0;
+
+		if self.programming_until.is_some() {
+			self.mode = EepromMode::Status;
+			self.data_out = self.programming_ready(cycle);
+		} else {
+			self.mode = EepromMode::Command;
+			self.data_out = false;
 		}
+	}
 
-		if !self.last_cs && cs {
-			self.mode = EepromMode::ReadCommand;
-			self.bit_counter = 0;
-			self.command_byte = 0;
-		}
+	fn end_transaction(&mut self) {
+		self.mode = EepromMode::Idle;
+		self.started = false;
+		self.input_bits = 0;
+		self.output_bits = 0;
+		self.data_out = false;
+	}
 
-		let mut miso_out = 0x00;
+	#[inline(always)]
+	fn programming_ready(&self, cycle: u64) -> bool {
+		self.programming_until.is_some_and(|until| cycle >= until)
+	}
 
-		if !sck && self.last_sck {
-			if self.mode == EepromMode::ReadData {
-				let bit_idx = 7 - (self.bit_counter % 8);
-				let byte_val = self.storage[(self.address_byte & 0x1FF) as usize];
-				if (byte_val & (1 << bit_idx)) != 0 { miso_out = 0x08; }
-				self.bit_counter += 1;
-				if self.bit_counter % 8 == 0 { self.address_byte = (self.address_byte + 1) & 0x1FF; }
+	fn begin_programming(&mut self, cycle: u64) {
+		self.programming_until = Some(cycle.saturating_add(EEPROM_PROGRAM_BUSY_CYCLES));
+		self.mode = EepromMode::Idle;
+		self.data_out = false;
+	}
+
+	fn begin_command_from_status(&mut self) {
+		self.programming_until = None;
+		self.mode = EepromMode::Command;
+		self.started = true;
+		self.opcode = 0;
+		self.address = 0;
+		self.input_bits = 0;
+		self.input_word = 0;
+		self.output_word = 0;
+		self.output_bits = 0;
+		self.data_out = false;
+	}
+
+	/* A complete x16 command consists of one start bit, a two-bit opcode and ten address/control bits. */
+	fn clock_command_bit(&mut self, data_in: bool, cycle: u64) {
+		if !self.started {
+			if data_in {
+				self.started = true;
+				self.opcode = 0;
+				self.address = 0;
+				self.input_bits = 0;
 			}
-		} else if sck && !self.last_sck {
-			match self.mode {
-				EepromMode::ReadCommand => {
-					self.command_byte = (self.command_byte << 1) | (if mosi { 1 } else { 0 });
-					self.bit_counter += 1;
-					if self.bit_counter == 3 {
-						let op = (self.command_byte >> 1) & 0x03;
-						let high_bit = if (self.command_byte & 1) != 0 { 0x0100 } else { 0 };
-						self.address_byte = high_bit;
-						self.mode = if op == 0x02 { EepromMode::ReadAddress }
-									else if op == 0x01 { EepromMode::WriteAddress }
-									else { EepromMode::Idle };
-						self.bit_counter = 0;
+			return;
+		}
+
+		if self.input_bits < 2 {
+			self.opcode = (self.opcode << 1) | u8::from(data_in);
+			self.input_bits += 1;
+			return;
+		}
+
+		self.address = (self.address << 1) | u16::from(data_in);
+		self.input_bits += 1;
+		if self.input_bits != 2 + EEPROM_ADDRESS_BITS {
+			return;
+		}
+
+		self.address &= EEPROM_WORDS - 1;
+		match self.opcode {
+			0b10 => {
+				self.output_word = self.read_word(self.address);
+				self.output_bits = EEPROM_WORD_BITS;
+				self.mode = EepromMode::Read;
+			}
+			0b01 => {
+				self.input_word = 0;
+				self.input_bits = 0;
+				self.mode = EepromMode::WriteData;
+			}
+			0b11 => {
+				if self.write_enabled {
+					self.write_word(self.address, 0xFFFF);
+					self.begin_programming(cycle);
+				} else {
+					self.mode = EepromMode::Idle;
+				}
+			}
+			0b00 => {
+				match (self.address >> 8) & 0x03 {
+					0b00 => self.write_enabled = false,
+					0b01 => {
+						self.input_word = 0;
+						self.input_bits = 0;
+						self.mode = EepromMode::WriteAllData;
+						return;
 					}
-				}
-				EepromMode::ReadAddress => {
-					self.address_byte = (self.address_byte & 0x0100) | ((self.address_byte & 0x00FF) << 1) | (if mosi { 1 } else { 0 });
-					self.bit_counter += 1;
-					if self.bit_counter == 8 { self.mode = EepromMode::ReadData; self.bit_counter = 0; }
-				}
-				EepromMode::WriteAddress => {
-					self.address_byte = (self.address_byte & 0x0100) | ((self.address_byte & 0x00FF) << 1) | (if mosi { 1 } else { 0 });
-					self.bit_counter += 1;
-					if self.bit_counter == 8 { self.mode = EepromMode::WriteData; self.bit_counter = 0; self.data_buffer = 0; }
-				}
-				EepromMode::WriteData => {
-					self.data_buffer = (self.data_buffer << 1) | (if mosi { 1 } else { 0 });
-					self.bit_counter += 1;
-					if self.bit_counter == 8 {
-						self.storage[(self.address_byte & 0x1FF) as usize] = self.data_buffer;
-						self.address_byte = (self.address_byte + 1) & 0x1FF;
-						self.bit_counter = 0;
+					0b10 => {
+						if self.write_enabled {
+							self.storage.fill(0xFF);
+							self.begin_programming(cycle);
+							return;
+						}
 					}
+					0b11 => self.write_enabled = true,
+					_ => {}
 				}
-				_ => {}
+				self.mode = EepromMode::Idle;
+			}
+			_ => {}
+		}
+	}
+
+	fn clock_write_bit(&mut self, data_in: bool, write_all: bool, cycle: u64) {
+		self.input_word = (self.input_word << 1) | u16::from(data_in);
+		self.input_bits += 1;
+		if self.input_bits != EEPROM_WORD_BITS {
+			return;
+		}
+
+		if self.write_enabled {
+			if write_all {
+				for address in 0..EEPROM_WORDS {
+					self.write_word(address, self.input_word);
+				}
+			} else {
+				self.write_word(self.address, self.input_word);
+			}
+			self.begin_programming(cycle);
+		} else {
+			self.mode = EepromMode::Idle;
+		}
+		self.input_bits = 0;
+	}
+
+	/* During sequential READ, each falling clock edge presents the next MSB-first data bit and advances to the next word after bit zero. */
+	fn clock_read_output(&mut self) {
+		if self.output_bits == 0 {
+			self.address = (self.address + 1) % EEPROM_WORDS;
+			self.output_word = self.read_word(self.address);
+			self.output_bits = EEPROM_WORD_BITS;
+		}
+		let bit = self.output_bits - 1;
+		self.data_out = (self.output_word & (1u16 << bit)) != 0;
+		self.output_bits -= 1;
+	}
+
+	/* Register writes directly drive CS, CLK and DI. Input is sampled on CLK rising edges; READ data is advanced on falling edges. During a self-timed write or erase, reselecting the EEPROM exposes READY/BUSY on DO until the next START bit. */
+	fn drive(&mut self, cs: bool, clock: bool, data_in: bool, cycle: u64) {
+		if !self.last_cs && cs {
+			self.begin_transaction(cycle);
+		} else if self.last_cs && !cs {
+			self.end_transaction();
+		}
+
+		if cs {
+			if self.mode == EepromMode::Status {
+				self.data_out = self.programming_ready(cycle);
+			}
+
+			if !self.last_clock && clock {
+				match self.mode {
+					EepromMode::Command => self.clock_command_bit(data_in, cycle),
+					EepromMode::WriteData => self.clock_write_bit(data_in, false, cycle),
+					EepromMode::WriteAllData => self.clock_write_bit(data_in, true, cycle),
+					EepromMode::Status if data_in && self.programming_ready(cycle) => {
+						self.begin_command_from_status()
+					}
+					EepromMode::Idle | EepromMode::Read | EepromMode::Status => {}
+				}
+			} else if self.last_clock && !clock && self.mode == EepromMode::Read {
+				self.clock_read_output();
 			}
 		}
 
 		self.last_cs = cs;
-		self.last_sck = sck;
-		miso_out
+		self.last_clock = clock;
+	}
+
+	#[inline(always)]
+	fn sample_data_out(&mut self, cycle: u64) -> bool {
+		if self.mode == EepromMode::Status {
+			self.data_out = self.programming_ready(cycle);
+		}
+		self.data_out
 	}
 }
 
-/* GMod2Mapper combines a large banked ROM image with serial EEPROM storage. Bank control and EEPROM line signalling share the cartridge IO space but remain separate internal devices. */
+/*
+GMod2 is a fixed 8K GAME cartridge with a 512 KiB flash device and a 2 KiB serial EEPROM sharing the $DE00 register. Bits 0-5 select the flash bank. Bit 6 deasserts EXROM while selecting the EEPROM. Bit 7 is the flash write-enable control and the EEPROM data-output bit on reads; it is not a cartridge mapping mode bit.
+*/
 pub struct GMod2Mapper {
-	roml: BankStorage, romh: BankStorage, bank: usize, cmode: u8,
-	eeprom: Gmod2Eeprom, eeprom_cs: bool, romh_enabled: bool,
+	roml: BankStorage,
+	bank: usize,
+	control: u8,
+	eeprom: Gmod2Eeprom,
 }
+
 impl GMod2Mapper {
-	/* GMod2 starts with ROM bank zero visible and the serial EEPROM deselected, leaving its data output electrically idle. */
 	pub fn new() -> Self {
-		Self { roml: BankStorage::new(), romh: BankStorage::new(), bank: 0, cmode: 0,
-			eeprom: Gmod2Eeprom::new(), eeprom_cs: false, romh_enabled: false }
+		Self {
+			roml: BankStorage::new(),
+			bank: 0,
+			control: 0,
+			eeprom: Gmod2Eeprom::new(),
+		}
+	}
+
+	#[inline(always)]
+	fn eeprom_selected(&self) -> bool {
+		self.control & 0x40 != 0
+	}
+
+	#[inline(always)]
+	fn flash_write_enabled(&self) -> bool {
+		self.control & 0xC0 == 0xC0
 	}
 }
+
 impl CartridgeMapper for GMod2Mapper {
 	fn reset(&mut self) {
 		self.bank = 0;
-		self.cmode = 0;
-		self.eeprom_cs = false;
-		self.romh_enabled = false;
+		self.control = 0;
 		self.eeprom.reset();
 	}
+
 	fn read_roml(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
-		if self.cmode != 0 { return None; }
-		self.roml.get_resolved(self.bank).map(|b| b[(offset & 0x1FFF) as usize])
+		if self.eeprom_selected() {
+			return None;
+		}
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
+
 	fn peek_roml(&self, offset: u16, _cycle: u64) -> Option<u8> {
-		if self.cmode != 0 { return None; }
-		self.roml.get_resolved(self.bank).map(|b| b[(offset & 0x1FFF) as usize])
+		if self.eeprom_selected() {
+			return None;
+		}
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
-	fn read_romh(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
-		if !self.romh_enabled { return None; }
-		self.romh.get_resolved(self.bank).map(|b| b[(offset & 0x1FFF) as usize])
+
+	fn read_romh(&mut self, _offset: u16, _cycle: u64) -> Option<u8> {
+		None
 	}
-	fn peek_romh(&self, offset: u16, _cycle: u64) -> Option<u8> {
-		if !self.romh_enabled { return None; }
-		self.romh.get_resolved(self.bank).map(|b| b[(offset & 0x1FFF) as usize])
+
+	fn peek_romh(&self, _offset: u16, _cycle: u64) -> Option<u8> {
+		None
 	}
-	fn read_io(&mut self, addr: u16, _cycle: u64) -> Option<u8> {
-		if (addr & 0xFF00) != 0xDE00 || !self.eeprom_cs { return None; }
-		let bit = self.eeprom.process_pins(0x01) & 0x08;
-		Some(if bit != 0 { 0x80 } else { 0x00 })
+
+	fn read_io(&mut self, addr: u16, cycle: u64) -> Option<u8> {
+		if (addr & 0xFF00) != 0xDE00 {
+			return None;
+		}
+		Some(if self.eeprom.sample_data_out(cycle) {
+			0x80
+		} else {
+			0x00
+		})
 	}
-	/* The serial EEPROM contributes only its data-output line to the I/O byte; the remaining seven bits retain the motherboard bus value through the drive mask. */
-	fn read_io_bus(&mut self, addr: u16, _cycle: u64) -> IoRead {
-		if (addr & 0xFF00) != 0xDE00 || !self.eeprom_cs { return IoRead::NotDecoded; }
-		let bit = self.eeprom.process_pins(0x01) & 0x08;
-		IoRead::PartiallyDriven { value: if bit != 0 { 0x80 } else { 0x00 }, mask: 0x80 }
+
+	/* Only bit 7 is driven by the EEPROM data-output path; the rest of the byte remains the shared motherboard bus value. */
+	fn read_io_bus(&mut self, addr: u16, cycle: u64) -> IoRead {
+		if (addr & 0xFF00) != 0xDE00 {
+			return IoRead::NotDecoded;
+		}
+		IoRead::PartiallyDriven {
+			value: if self.eeprom.sample_data_out(cycle) {
+				0x80
+			} else {
+				0x00
+			},
+			mask: 0x80,
+		}
 	}
-	fn peek_io(&self, addr: u16, _cycle: u64) -> Option<u8> {
-		if (addr & 0xFF00) != 0xDE00 || !self.eeprom_cs { return None; }
-		Some(0)
+
+	fn peek_io(&self, addr: u16, cycle: u64) -> Option<u8> {
+		if (addr & 0xFF00) != 0xDE00 {
+			return None;
+		}
+		let data_out = if self.eeprom.mode == EepromMode::Status {
+			self.eeprom.programming_ready(cycle)
+		} else {
+			self.eeprom.data_out
+		};
+		Some(if data_out { 0x80 } else { 0x00 })
 	}
-	/* IO1 writes update the ROM bank and EEPROM chip-select, clock and data pins together; the serial engine advances only on the relevant signal edges. */
-	fn write_io(&mut self, addr: u16, val: u8, _cycle: u64) {
-		if !(addr >= 0xDE00 && addr <= 0xDEFF) { return; }
-		self.bank = (val & 0x3F) as usize;
-		self.cmode = if (val & 0xC0) == 0xC0 { 2 } else if (val & 0x40) == 0 { 0 } else { 1 };
-		self.romh_enabled = self.cmode == 2;
-		self.eeprom_cs = (val & 0x40) != 0;
-		let cs = (val >> 6) & 1;
-		let clock = (val >> 5) & 1;
-		let data = (val >> 4) & 1;
-		let ctrl = cs | (clock << 1) | (data << 2);
-		self.eeprom.process_pins(ctrl);
+
+	/* Every address in the IO1 page mirrors the single GMod2 register. Banking and EEPROM pins therefore change from the same written byte. */
+	fn write_io(&mut self, addr: u16, value: u8, cycle: u64) {
+		if (addr & 0xFF00) != 0xDE00 {
+			return;
+		}
+		self.control = value;
+		self.bank = (value & 0x3F) as usize;
+		self.eeprom.drive(
+			value & 0x40 != 0,
+			value & 0x20 != 0,
+			value & 0x10 != 0,
+			cycle,
+		);
 	}
-	/* Writes in the mapped ROM area are redirected to cartridge RAM when the active mode exposes writable storage. */
-	fn write_rom(&mut self, addr: u16, val: u8, _cycle: u64) {
-		if self.cmode != 2 || addr < 0xE000 { return; }
-		if let Some(bank) = self.romh.get_resolved_mut(self.bank) {
+
+	/* GMod2 flash programming is enabled only by bits 7 and 6 together; normal game operation never treats bit 7 as a ROMH/Ultimax mapping selector. */
+	fn write_rom(&mut self, addr: u16, value: u8, _cycle: u64) {
+		if !self.flash_write_enabled() || addr < 0xE000 {
+			return;
+		}
+		if let Some(bank) = self.roml.get_resolved_mut(self.bank) {
 			let index = (addr & 0x1FFF) as usize;
-			bank[index] &= val;
+			bank[index] &= value;
 		}
 	}
+
 	fn add_bank(&mut self, bank: usize, addr: u16, data: &[u8]) {
-		let offset = (addr & 0x1FFF) as usize;
-		if addr < 0xA000 { self.roml.store_bank(bank, data, offset); } else { self.romh.store_bank(bank, data, offset); }
-	}
-	fn update_signals(&mut self, _cycle: u64, lines: &mut LineState) {
-		match self.cmode {
-			0 => { lines.game = true; lines.exrom = false; }
-			1 => { lines.game = true; lines.exrom = true; }
-			_ => { lines.game = false; lines.exrom = true; }
+		if addr == 0x8000 {
+			self.roml.store_bank(bank, data, 0);
 		}
 	}
+
+	/* Some GMod2 CRT images carry the initial 2 KiB EEPROM image as a CHIP packet at $DE00. It is device state, not ROMH. */
+	fn add_chip(&mut self, _chip_type: ChipType, bank: usize, addr: u16, data: &[u8]) {
+		if addr == 0xDE00 && data.len() <= EEPROM_BYTES {
+			let count = data.len();
+			self.eeprom.storage[..count].copy_from_slice(data);
+			return;
+		}
+		self.add_bank(bank, addr, data);
+	}
+
+	fn update_signals(&mut self, _cycle: u64, lines: &mut LineState) {
+		lines.game = true;
+		lines.exrom = self.eeprom_selected();
+	}
+
 	fn on_freeze(&mut self, _lines: &mut LineState) {}
+
 	fn get_info(&self) -> CartridgeInfo {
-		CartridgeInfo { name: "GMod2".to_string(), mapper_type: MapperType::GMod2, rom_size: (self.roml.len() + self.romh.len()) * 8192, bank_count: self.roml.len().max(1), has_ram: true }
+		CartridgeInfo {
+			name: "GMod2".to_string(),
+			mapper_type: MapperType::GMod2,
+			rom_size: self.roml.len() * 8192,
+			bank_count: self.roml.len().max(1),
+			has_ram: true,
+		}
 	}
-	fn get_debug_bank(&self) -> usize { self.bank }
-	fn get_max_bank(&self) -> usize { self.roml.len().saturating_sub(1) }
+
+	fn get_debug_bank(&self) -> usize {
+		self.bank
+	}
+
+	fn get_max_bank(&self) -> usize {
+		self.roml.len().saturating_sub(1)
+	}
+
 	fn load_nvram(&mut self, data: &[u8]) {
-		let n = data.len().min(self.eeprom.storage.len()); self.eeprom.storage[..n].copy_from_slice(&data[..n]);
+		let count = data.len().min(self.eeprom.storage.len());
+		self.eeprom.storage[..count].copy_from_slice(&data[..count]);
 	}
-	fn save_nvram(&self) -> Option<Vec<u8>> { Some(self.eeprom.storage.to_vec()) }
+
+	fn save_nvram(&self) -> Option<Vec<u8>> {
+		Some(self.eeprom.storage.to_vec())
+	}
 }

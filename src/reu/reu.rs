@@ -1,3 +1,7 @@
+// =======================================================
+// src/reu/reu.rs — MOS 8726 RAM Expansion Controller
+// =======================================================
+
 /*
  * MOS 8726 RAM Expansion Controller.
  *
@@ -12,18 +16,17 @@ use crate::vic::VicII;
 
 use super::constants::{
 	ADDRESS_CONTROL, ADDRESS_CONTROL_FIX_C64, ADDRESS_CONTROL_FIX_REU,
-	ADDRESS_CONTROL_UNUSED_READ_HIGH, COMMAND, COMMAND_AUTOLOAD,
-	COMMAND_COMPLETION_MASK, COMMAND_EXECUTE, COMMAND_FF00_DISABLE,
-	COMMAND_TRANSFER_TYPE_MASK, C64_ADDRESS_HIGH, C64_ADDRESS_LOW,
-	FULL_64K_TRANSFER_LENGTH, INTERRUPT_END_OF_BLOCK_ENABLE,
-	INTERRUPT_GLOBAL_ENABLE, INTERRUPT_MASK, INTERRUPT_UNUSED_READ_HIGH,
-	INTERRUPT_VERIFY_ENABLE, REGISTER_COUNT, REU_ADDRESS_BANK, REU_ADDRESS_HIGH,
-	REU_ADDRESS_LOW, STATUS, STATUS_END_OF_BLOCK, STATUS_IRQ_PENDING,
-	STATUS_VERIFY_ERROR, STATUS_VERSION, TRANSFER_LENGTH_HIGH, TRANSFER_LENGTH_LOW, UNUSED_REGISTER_VALUE,
+	ADDRESS_CONTROL_UNUSED_READ_HIGH, C64_ADDRESS_HIGH, C64_ADDRESS_LOW, COMMAND, COMMAND_AUTOLOAD,
+	COMMAND_COMPLETION_MASK, COMMAND_EXECUTE, COMMAND_FF00_DISABLE, COMMAND_TRANSFER_TYPE_MASK,
+	FULL_64K_TRANSFER_LENGTH, INTERRUPT_END_OF_BLOCK_ENABLE, INTERRUPT_GLOBAL_ENABLE,
+	INTERRUPT_MASK, INTERRUPT_UNUSED_READ_HIGH, INTERRUPT_VERIFY_ENABLE, REGISTER_COUNT,
+	REU_ADDRESS_BANK, REU_ADDRESS_HIGH, REU_ADDRESS_LOW, STATUS, STATUS_END_OF_BLOCK,
+	STATUS_IRQ_PENDING, STATUS_VERIFY_ERROR, STATUS_VERSION, TRANSFER_LENGTH_HIGH,
+	TRANSFER_LENGTH_LOW, UNUSED_REGISTER_VALUE,
 };
 use super::dma::{DmaState, SwapPhase, TransferType};
 use super::memory::ReuMemory;
-use super::timing::{action_for_cycle, ReuBusAction};
+use super::timing::{ReuBusAction, action_for_cycle};
 
 /*
  * The motherboard queries the C64-side operation before granting a DMA cycle.
@@ -146,17 +149,29 @@ impl Reu {
 		let command = self.regs[COMMAND];
 		let address_control = self.regs[ADDRESS_CONTROL];
 		let autoload = command & COMMAND_AUTOLOAD != 0;
-		let visible_c64_addr = u16::from(self.regs[C64_ADDRESS_LOW])
-			| (u16::from(self.regs[C64_ADDRESS_HIGH]) << 8);
+		let visible_c64_addr =
+			u16::from(self.regs[C64_ADDRESS_LOW]) | (u16::from(self.regs[C64_ADDRESS_HIGH]) << 8);
 		let visible_reu_addr = usize::from(self.regs[REU_ADDRESS_LOW])
 			| (usize::from(self.regs[REU_ADDRESS_HIGH]) << 8)
 			| (usize::from(self.regs[REU_ADDRESS_BANK]) << 16);
 		let visible_length = usize::from(self.regs[TRANSFER_LENGTH_LOW])
 			| (usize::from(self.regs[TRANSFER_LENGTH_HIGH]) << 8);
 
-		let c64_addr = if autoload { self.shadow_c64_addr } else { visible_c64_addr };
-		let reu_addr = if autoload { self.shadow_reu_addr } else { visible_reu_addr };
-		let length = if autoload { self.shadow_len } else { visible_length };
+		let c64_addr = if autoload {
+			self.shadow_c64_addr
+		} else {
+			visible_c64_addr
+		};
+		let reu_addr = if autoload {
+			self.shadow_reu_addr
+		} else {
+			visible_reu_addr
+		};
+		let length = if autoload {
+			self.shadow_len
+		} else {
+			visible_length
+		};
 
 		self.regs[STATUS] &= STATUS_VERSION;
 		self.irq_pending = false;
@@ -164,7 +179,11 @@ impl Reu {
 			transfer_type: TransferType::from_command(command & COMMAND_TRANSFER_TYPE_MASK),
 			c64_addr,
 			reu_addr,
-			remaining: if length == 0 { FULL_64K_TRANSFER_LENGTH } else { length },
+			remaining: if length == 0 {
+				FULL_64K_TRANSFER_LENGTH
+			} else {
+				length
+			},
 			fix_c64: address_control & ADDRESS_CONTROL_FIX_C64 != 0,
 			fix_reu: address_control & ADDRESS_CONTROL_FIX_REU != 0,
 			autoload,
@@ -188,7 +207,10 @@ impl Reu {
 	}
 
 	pub fn debug_register(&self, index: usize) -> u8 {
-		self.regs.get(index).copied().unwrap_or(UNUSED_REGISTER_VALUE)
+		self.regs
+			.get(index)
+			.copied()
+			.unwrap_or(UNUSED_REGISTER_VALUE)
 	}
 
 	/*

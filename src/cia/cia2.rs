@@ -3,9 +3,9 @@
 // =======================================================
 
 use super::cia::Cia;
-use std::rc::Rc;
-use crate::iec::IecBus;
 use super::constants::{CR_PBON, IEC_OUTPUT_MASK};
+use crate::iec::IecBus;
+use std::rc::Rc;
 
 /* CIA 2 couples the shared 6526 core to VIC banking, IEC open-collector outputs and the NMI-facing interrupt path. */
 pub struct Cia2 {
@@ -68,9 +68,13 @@ impl Cia2 {
 	/* CIA 2 port A combines the VIC bank outputs and serial-bus controls, with serial clock and data inputs visible on bits 6 and 7 (C64-PRG-1982, CIA 2 port assignments). */
 	pub fn peek(&self, addr: u16) -> u8 {
 		let reg = (addr & 0x000F) as u8;
-		if reg == 0x01 { return self.read_port_b(); }
+		if reg == 0x01 {
+			return self.read_port_b();
+		}
 		if reg == 0x00 {
-			let external = 0x3F | if self.iec_clk_in { 0x40 } else { 0 } | if self.iec_data_in { 0x80 } else { 0 };
+			let external = 0x3F
+				| if self.iec_clk_in { 0x40 } else { 0 }
+				| if self.iec_data_in { 0x80 } else { 0 };
 			return (self.inner.pra & self.inner.ddra) | (external & !self.inner.ddra);
 		}
 		self.inner.peek(reg)
@@ -97,10 +101,18 @@ impl Cia2 {
 		let mut val = self.inner.prb | !self.inner.ddrb;
 		let (ta_out, tb_out) = self.inner.timer_outputs();
 		if (self.inner.ta.cr & CR_PBON) != 0 {
-			if ta_out { val |= 0x40; } else { val &= !0x40; }
+			if ta_out {
+				val |= 0x40;
+			} else {
+				val &= !0x40;
+			}
 		}
 		if (self.inner.tb.cr & CR_PBON) != 0 {
-			if tb_out { val |= 0x80; } else { val &= !0x80; }
+			if tb_out {
+				val |= 0x80;
+			} else {
+				val &= !0x80;
+			}
 		}
 		val
 	}
@@ -153,5 +165,7 @@ impl Cia2 {
 		}
 	}
 
-	pub fn set_flag_pin(&mut self, state: bool) { self.inner.set_flag_pin(state); }
+	pub fn set_flag_pin(&mut self, state: bool) {
+		self.inner.set_flag_pin(state);
+	}
 }

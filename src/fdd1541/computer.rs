@@ -5,11 +5,11 @@
 use super::constants::{DOS_ROM, DOS_ROM_SIZE, DRIVE_RAM_SIZE};
 use std::path::Path;
 
-use crate::cpu::bus::SystemBus;
 use super::disk_drive::DiskMechanism;
 use super::iec::DriveIecBus;
 use super::via1::Via1;
 use super::via2::Via2;
+use crate::cpu::bus::SystemBus;
 
 /* DriveBus joins the 6502 address space to the two 6522 VIAs, the DOS ROM and local RAM. It also owns the mechanical subsystem so VIA2 outputs affect the head and spindle in the same drive cycle. */
 pub struct DriveBus {
@@ -143,7 +143,8 @@ impl DriveBus {
 		let write_mode = self.via2.head_write_mode();
 		let write_byte = self.via2.head_byte_out();
 
-		self.drive.step(motor, density, phase, write_mode, write_byte);
+		self.drive
+			.step(motor, density, phase, write_mode, write_byte);
 
 		let byte_ready = self.drive.byte_ready();
 		let byte_ready_enabled = byte_ready && self.via2.so_enabled();

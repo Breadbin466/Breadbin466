@@ -3,7 +3,7 @@
 // =======================================================
 
 pub use crate::emulator::constants::{PAL_FRAME_DURATION, WARP_PRESENT_INTERVAL};
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 /* TimeKeeper maps wall-clock time onto PAL frame boundaries. It limits catch-up after host stalls, makes warp presentation rate independent from emulation rate, and provides a single resynchronisation point after pauses or disruptive UI operations. */
 pub struct TimeKeeper {
@@ -15,18 +15,18 @@ pub struct TimeKeeper {
 }
 
 impl TimeKeeper {
-/* Construction anchors emulation and presentation deadlines to the same host instant, avoiding an artificial first-frame catch-up. */
+	/* Construction anchors emulation and presentation deadlines to the same host instant, avoiding an artificial first-frame catch-up. */
 	pub fn new() -> Self {
 		Self {
 			next_frame_time: Instant::now(),
-			last_present:    Instant::now(),
-			warp_mode:       false,
-			warp_1541:       false,
-			frames_ran:      0,
+			last_present: Instant::now(),
+			warp_mode: false,
+			warp_1541: false,
+			frames_ran: 0,
 		}
 	}
 
-/* Resynchronisation abandons accumulated wall-clock debt after pauses, modal operations or resets. */
+	/* Resynchronisation abandons accumulated wall-clock debt after pauses, modal operations or resets. */
 	pub fn resynchronise(&mut self) {
 		let now = Instant::now();
 		self.next_frame_time = now;
@@ -34,7 +34,7 @@ impl TimeKeeper {
 		self.frames_ran = 0;
 	}
 
-/* Full-machine warp and drive-only warp are mutually exclusive because they suspend pacing under different conditions. */
+	/* Full-machine warp and drive-only warp are mutually exclusive because they suspend pacing under different conditions. */
 	pub fn toggle_warp_mode(&mut self) {
 		self.warp_mode = !self.warp_mode;
 		if self.warp_mode {
@@ -42,7 +42,7 @@ impl TimeKeeper {
 		}
 	}
 
-/* Drive warp accelerates only while the 1541 is active and disables unconditional warp when selected. */
+	/* Drive warp accelerates only while the 1541 is active and disables unconditional warp when selected. */
 	pub fn toggle_drive_warp(&mut self) {
 		self.warp_1541 = !self.warp_1541;
 		if self.warp_1541 {

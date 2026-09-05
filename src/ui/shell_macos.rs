@@ -12,7 +12,10 @@ use crate::emulator::Result;
 pub struct Shell;
 
 impl Shell {
-	pub fn create_window(application: &ActiveEventLoop, attributes: WindowAttributes) -> Result<Arc<Window>> {
+	pub fn create_window(
+		application: &ActiveEventLoop,
+		attributes: WindowAttributes,
+	) -> Result<Arc<Window>> {
 		Ok(Arc::new(application.create_window(attributes)?))
 	}
 }

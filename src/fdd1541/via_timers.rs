@@ -4,7 +4,7 @@
 
 use super::{
 	constants::{VIA_IFR_IRQ, VIA_IFR_T1, VIA_IFR_T2},
-	via::{shift_register_mode, ViaChip},
+	via::{ViaChip, shift_register_mode},
 };
 
 impl ViaChip {
@@ -153,5 +153,4 @@ impl ViaChip {
 			}
 		}
 	}
-
 }

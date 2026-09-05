@@ -5,10 +5,10 @@
 use super::constants::DRIVE_CPU_FREQ_HZ;
 use std::path::Path;
 
-use crate::cpu::bus::SystemBus;
-use crate::cpu::{Cpu, CpuModel};
 use super::computer::DriveBus;
 use super::iec::DriveIecBus;
+use crate::cpu::bus::SystemBus;
+use crate::cpu::{Cpu, CpuModel};
 
 /* The drive is modelled as an independent computer. Host cycles are converted to 1541 clock opportunities, while all communication with the C64 crosses only the resolved IEC line state. */
 pub struct Fdd1541 {

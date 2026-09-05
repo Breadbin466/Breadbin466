@@ -6,16 +6,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use objc2::rc::Retained;
-use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
+use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-	NSApplication, NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags,
-	NSMenu, NSMenuItem,
+	NSApplication, NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSMenu,
+	NSMenuItem,
 };
 use objc2_foundation::{NSObject, NSObjectProtocol, NSString};
 use winit::window::Window;
 
+use super::menu::{
+	MenuEntry, MenuKey, MenuModel, MenuModifier, MenuSection, MenuShortcut, push_menu_event,
+};
 use crate::emulator::Result;
-use super::menu::{push_menu_event, MenuEntry, MenuKey, MenuModel, MenuModifier, MenuSection, MenuShortcut};
 
 static COMMANDS: OnceLock<Mutex<HashMap<isize, String>>> = OnceLock::new();
 
@@ -56,9 +58,10 @@ pub struct PlatformMenu {
 
 impl PlatformMenu {
 	/* Construction must occur on the AppKit main thread and installs one retained target for every generated command item. */
-/* AppKit construction replaces the process menu bar from the shared model and retains checkable items for synchronisation. */
+	/* AppKit construction replaces the process menu bar from the shared model and retains checkable items for synchronisation. */
 	pub fn new(_window: &Window, model: Arc<RwLock<MenuModel>>) -> Result<Self> {
-		let main_thread = MainThreadMarker::new().ok_or("AppKit menu must be created on the main thread")?;
+		let main_thread =
+			MainThreadMarker::new().ok_or("AppKit menu must be created on the main thread")?;
 		let mut platform = Self {
 			model,
 			target: Breadbin466MenuTarget::new(main_thread),
@@ -71,8 +74,13 @@ impl PlatformMenu {
 
 	/* Refresh recreates the complete NSMenu tree, resets tag allocation and republishes the tag-to-command map used by the Objective-C callback. */
 	pub fn refresh(&mut self) -> Result<()> {
-		let main_thread = MainThreadMarker::new().ok_or("AppKit menu refresh must run on the main thread")?;
-		let model = self.model.read().map_err(|_| "Menu model lock poisoned")?.clone();
+		let main_thread =
+			MainThreadMarker::new().ok_or("AppKit menu refresh must run on the main thread")?;
+		let model = self
+			.model
+			.read()
+			.map_err(|_| "Menu model lock poisoned")?
+			.clone();
 		self.items.clear();
 		self.next_tag = 1;
 		if let Ok(mut commands) = COMMANDS.get_or_init(|| Mutex::new(HashMap::new())).lock() {
@@ -89,14 +97,23 @@ impl PlatformMenu {
 
 	pub fn set_checked(&mut self, id: &str, checked: bool) -> Result<()> {
 		if let Some(item) = self.items.get(id) {
-			item.setState(if checked { NSControlStateValueOn } else { NSControlStateValueOff });
+			item.setState(if checked {
+				NSControlStateValueOn
+			} else {
+				NSControlStateValueOff
+			});
 		}
 		Ok(())
 	}
 
 	pub fn pump(&mut self) {}
 
-	fn append_top_level(&mut self, root: &NSMenu, section: &MenuSection, main_thread: MainThreadMarker) {
+	fn append_top_level(
+		&mut self,
+		root: &NSMenu,
+		section: &MenuSection,
+		main_thread: MainThreadMarker,
+	) {
 		let item = new_item(&section.label, section.enabled, main_thread);
 		let submenu = new_menu(&section.label, main_thread);
 		self.append_entries(&submenu, &section.entries, main_thread);
@@ -104,8 +121,13 @@ impl PlatformMenu {
 		root.addItem(&item);
 	}
 
-/* Recursive conversion preserves hierarchy while native targets forward only stable command identifiers. */
-	fn append_entries(&mut self, menu: &NSMenu, entries: &[MenuEntry], main_thread: MainThreadMarker) {
+	/* Recursive conversion preserves hierarchy while native targets forward only stable command identifiers. */
+	fn append_entries(
+		&mut self,
+		menu: &NSMenu,
+		entries: &[MenuEntry],
+		main_thread: MainThreadMarker,
+	) {
 		for entry in entries {
 			match entry {
 				MenuEntry::Separator => menu.addItem(&NSMenuItem::separatorItem(main_thread)),
@@ -116,12 +138,25 @@ impl PlatformMenu {
 					item.setSubmenu(Some(&submenu));
 					menu.addItem(&item);
 				}
-				MenuEntry::Action { id, label, enabled, shortcut } => {
-					let item = self.command_item(id, label, *enabled, false, *shortcut, main_thread);
+				MenuEntry::Action {
+					id,
+					label,
+					enabled,
+					shortcut,
+				} => {
+					let item =
+						self.command_item(id, label, *enabled, false, *shortcut, main_thread);
 					menu.addItem(&item);
 				}
-				MenuEntry::Check { id, label, enabled, checked, shortcut } => {
-					let item = self.command_item(id, label, *enabled, *checked, *shortcut, main_thread);
+				MenuEntry::Check {
+					id,
+					label,
+					enabled,
+					checked,
+					shortcut,
+				} => {
+					let item =
+						self.command_item(id, label, *enabled, *checked, *shortcut, main_thread);
 					menu.addItem(&item);
 				}
 			}
@@ -145,7 +180,11 @@ impl PlatformMenu {
 			item.setTarget(Some(&*self.target));
 			item.setAction(Some(sel!(activateBreadbinMenuItem:)));
 		}
-		item.setState(if checked { NSControlStateValueOn } else { NSControlStateValueOff });
+		item.setState(if checked {
+			NSControlStateValueOn
+		} else {
+			NSControlStateValueOff
+		});
 		if let Some(shortcut) = shortcut {
 			let equivalent = NSString::from_str(key_equivalent(shortcut.key));
 			item.setKeyEquivalent(&equivalent);

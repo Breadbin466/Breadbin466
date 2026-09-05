@@ -2,10 +2,10 @@
 // src/pla/cpu_map.rs — CPU address decoder using MOS 906114-01 PLA
 // =======================================================
 
-use crate::pla::constants::{RAM, ROML, ROMH, IO, COLOR_RAM};
-use crate::memory::constants::MapRegion;
 use super::pla::evaluate;
 use super::signals::PlaInputSignals;
+use crate::memory::constants::MapRegion;
+use crate::pla::constants::{COLOR_RAM, IO, RAM, ROMH, ROML};
 
 /* CPU accesses hold AEC and BA high in this reduced evaluator and derive the three banking inputs from the effective 6510 port pins. GAME and EXROM are passed as their physical active-low levels. */
 #[inline(always)]
@@ -39,7 +39,6 @@ fn build_cpu_inputs(addr: u16, port: u8, game_n: bool, exrom_n: bool, rw: bool) 
 pub struct CpuWriteSelection(u8);
 
 impl CpuWriteSelection {
-
 	#[inline(always)]
 	fn new(
 		ram_selected: bool,
@@ -58,26 +57,29 @@ impl CpuWriteSelection {
 	}
 
 	#[inline(always)]
-	pub fn ram_selected(self) -> bool { self.0 & RAM != 0 }
+	pub fn ram_selected(self) -> bool {
+		self.0 & RAM != 0
+	}
 
 	#[inline(always)]
-	pub fn cartridge_selected(self) -> bool { self.0 & (ROML | ROMH) != 0 }
+	pub fn cartridge_selected(self) -> bool {
+		self.0 & (ROML | ROMH) != 0
+	}
 
 	#[inline(always)]
-	pub fn io_selected(self) -> bool { self.0 & IO != 0 }
+	pub fn io_selected(self) -> bool {
+		self.0 & IO != 0
+	}
 
 	#[inline(always)]
-	pub fn color_ram_selected(self) -> bool { self.0 & COLOR_RAM != 0 }
+	pub fn color_ram_selected(self) -> bool {
+		self.0 & COLOR_RAM != 0
+	}
 }
 
 /* Write decoding evaluates both the write-cycle outputs and the corresponding read window. The latter preserves ROML/ROMH cartridge chip selects even though internal ROMs themselves are read-only, while CASRAM can simultaneously expose hidden RAM (C64-PRG-1982, memory-map notes). */
 #[inline(always)]
-pub fn select_cpu_write(
-	addr: u16,
-	port: u8,
-	game: bool,
-	exrom: bool,
-) -> CpuWriteSelection {
+pub fn select_cpu_write(addr: u16, port: u8, game: bool, exrom: bool) -> CpuWriteSelection {
 	/* Ultimax ignores the 6510 banking bits. Only low RAM, cartridge windows and I/O remain decoded; the other ranges are electrically unmapped (C64-PRG-1982, Ultimax memory map). */
 	if !game && exrom {
 		let io_visible = addr >= 0xD000;
@@ -104,12 +106,7 @@ pub fn select_cpu_write(
 }
 
 #[inline(always)]
-pub fn map_cpu_read_addr(
-	addr: u16,
-	port: u8,
-	game: bool,
-	exrom: bool,
-) -> MapRegion {
+pub fn map_cpu_read_addr(addr: u16, port: u8, game: bool, exrom: bool) -> MapRegion {
 	/* In Ultimax mode the open ranges are represented explicitly rather than falling back to RAM. */
 	if !game && exrom {
 		return match addr {
@@ -123,17 +120,29 @@ pub fn map_cpu_read_addr(
 	}
 	let out = evaluate(build_cpu_inputs(addr, port, game, exrom, true));
 
-	if !out.roml_n { return MapRegion::RomL; }
-	if !out.romh_n { return MapRegion::RomH; }
-	if !out.basic_n { return MapRegion::Basic; }
-	if !out.kernal_n { return MapRegion::Kernal; }
-	if !out.charom_n { return MapRegion::Char; }
+	if !out.roml_n {
+		return MapRegion::RomL;
+	}
+	if !out.romh_n {
+		return MapRegion::RomH;
+	}
+	if !out.basic_n {
+		return MapRegion::Basic;
+	}
+	if !out.kernal_n {
+		return MapRegion::Kernal;
+	}
+	if !out.charom_n {
+		return MapRegion::Char;
+	}
 
 	if !out.io_n {
 		return decode_io_subrange(addr);
 	}
 
-	if !out.casram_n { return MapRegion::Ram; }
+	if !out.casram_n {
+		return MapRegion::Ram;
+	}
 
 	MapRegion::Floating
 }

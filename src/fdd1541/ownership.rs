@@ -18,7 +18,10 @@ impl DriveWorker {
 		self.send(Request::TakeOwnership);
 		match self.receive() {
 			Response::Ownership(drive, emitted, host_state, published) => {
-				assert_eq!(emitted, completed_cycle, "1541 ownership transferred at the wrong cycle");
+				assert_eq!(
+					emitted, completed_cycle,
+					"1541 ownership transferred at the wrong cycle"
+				);
 				self.local_drive = Some(drive);
 				self.last_host_state = host_state;
 				self.device_view = published;
@@ -33,8 +36,14 @@ impl DriveWorker {
 		let Some(drive) = self.local_drive.take() else {
 			return;
 		};
-		self.cable.host_cycle.0.store(completed_cycle, Ordering::Relaxed);
-		self.cable.drive_cycle.0.store(completed_cycle, Ordering::Relaxed);
+		self.cable
+			.host_cycle
+			.0
+			.store(completed_cycle, Ordering::Relaxed);
+		self.cable
+			.drive_cycle
+			.0
+			.store(completed_cycle, Ordering::Relaxed);
 		self.send(Request::ReturnOwnership {
 			drive,
 			emitted: completed_cycle,
@@ -42,5 +51,4 @@ impl DriveWorker {
 			published: self.device_view,
 		});
 	}
-
 }

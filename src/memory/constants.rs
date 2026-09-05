@@ -32,6 +32,9 @@ pub enum MapRegion {
 
 /* The shared data-bus latch is retained briefly before undriven reads relax to all ones. This is an emulator model of residual bus charge rather than a PLA output. */
 pub(crate) const FLOAT_HOLD_CYCLES: u64 = 8;
-pub(crate) const BASIC_ROM: &[u8; BASIC_ROM_SIZE] = include_bytes!("../../roms/basic_901226-01.bin");
-pub(crate) const KERNAL_ROM: &[u8; KERNAL_ROM_SIZE] = include_bytes!("../../roms/kernal_901227-03.bin");
-pub(crate) const CHAR_ROM: &[u8; CHAR_ROM_SIZE] = include_bytes!("../../roms/characters_901225-01.bin");
+pub(crate) const BASIC_ROM: &[u8; BASIC_ROM_SIZE] =
+	include_bytes!("../../roms/basic_901226-01.bin");
+pub(crate) const KERNAL_ROM: &[u8; KERNAL_ROM_SIZE] =
+	include_bytes!("../../roms/kernal_901227-03.bin");
+pub(crate) const CHAR_ROM: &[u8; CHAR_ROM_SIZE] =
+	include_bytes!("../../roms/characters_901225-01.bin");

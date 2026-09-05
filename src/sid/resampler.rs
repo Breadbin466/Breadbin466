@@ -1,14 +1,14 @@
 // =======================================================
-// src/sid/resampler.rs — Causal two-stage 44.1 kHz conversion
+// src/sid/resampler.rs — SID audio resampler
 // =======================================================
+
+/* Causal conversion from the SID clock domain to the host audio rate. */
 
 use std::f64::consts::PI;
 
 use super::constants::{
-	SID_RESAMPLER_BUTTERWORTH_Q, SID_RESAMPLER_FIRST_CUTOFF_HZ,
-	SID_RESAMPLER_FIRST_TAPS, SID_RESAMPLER_INTERMEDIATE_HZ,
-	SID_RESAMPLER_PHASES, SID_RESAMPLER_SECOND_CUTOFF_HZ,
-	SID_RESAMPLER_SECOND_DECIMATION,
+	SID_RESAMPLER_BUTTERWORTH_Q, SID_RESAMPLER_FIRST_CUTOFF_HZ, SID_RESAMPLER_FIRST_TAPS,
+	SID_RESAMPLER_PHASES, SID_RESAMPLER_SECOND_CUTOFF_HZ, SID_RESAMPLER_SECOND_DECIMATION,
 };
 
 /* The first stage converts the PAL SID clock to an integer intermediate rate with a polyphase windowed-sinc FIR. Fractional phase interpolation avoids quantising output times to source cycles. */
@@ -56,10 +56,13 @@ impl FractionalFirStage {
 			for (tap, coefficient) in row.iter_mut().enumerate() {
 				let distance = tap as f64 - centre - fractional_back;
 				let angle = 2.0 * PI * normalised_cutoff * distance;
-				let sinc = if angle.abs() < 1.0e-14 { 1.0 } else { angle.sin() / angle };
+				let sinc = if angle.abs() < 1.0e-14 {
+					1.0
+				} else {
+					angle.sin() / angle
+				};
 				let position = tap as f64 / (tap_count - 1) as f64;
-				let window = 0.35875
-					- 0.48829 * (2.0 * PI * position).cos()
+				let window = 0.35875 - 0.48829 * (2.0 * PI * position).cos()
 					+ 0.14128 * (4.0 * PI * position).cos()
 					- 0.01168 * (6.0 * PI * position).cos();
 				let value = 2.0 * normalised_cutoff * sinc * window;
@@ -67,7 +70,9 @@ impl FractionalFirStage {
 				sum += value;
 			}
 			let inverse_sum = (1.0 / sum) as f32;
-			for coefficient in row { *coefficient *= inverse_sum; }
+			for coefficient in row {
+				*coefficient *= inverse_sum;
+			}
 		}
 		table.into_boxed_slice()
 	}
@@ -85,13 +90,15 @@ impl FractionalFirStage {
 		self.ring[self.write_index + self.tap_count] = sample;
 
 		self.phase_accumulator += self.target_frequency;
-		if self.phase_accumulator < self.source_frequency { return None; }
+		if self.phase_accumulator < self.source_frequency {
+			return None;
+		}
 		self.phase_accumulator -= self.source_frequency;
 
 		let fractional_back = self.phase_accumulator as f64 * self.target_frequency_inverse;
 		let phase_position = fractional_back.clamp(0.0, 1.0) * SID_RESAMPLER_PHASES as f64;
-		let lower_phase = phase_position.floor() as usize;
-		let upper_phase = (lower_phase + 1).min(SID_RESAMPLER_PHASES);
+		let lower_phase = phase_position as usize;
+		let upper_phase = lower_phase + 1;
 		let fraction = (phase_position - lower_phase as f64) as f32;
 		let lower = self.convolve(lower_phase);
 		let upper = self.convolve(upper_phase);
@@ -100,9 +107,7 @@ impl FractionalFirStage {
 
 	#[inline(always)]
 	fn convolve(&self, phase: usize) -> f32 {
-		let coefficients = &self.coefficients[
-			phase * self.tap_count..(phase + 1) * self.tap_count
-		];
+		let coefficients = &self.coefficients[phase * self.tap_count..(phase + 1) * self.tap_count];
 		let samples = &self.ring[self.write_index..self.write_index + self.tap_count];
 		let mut accumulator = 0.0f32;
 		for index in 0..self.tap_count {
@@ -162,7 +167,8 @@ impl Biquad {
 	#[inline(always)]
 	fn process(&mut self, input: f64) -> f64 {
 		let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
-			- self.a1 * self.y1 - self.a2 * self.y2;
+			- self.a1 * self.y1
+			- self.a2 * self.y2;
 		self.x2 = self.x1;
 		self.x1 = input;
 		self.y2 = self.y1;
@@ -194,15 +200,16 @@ struct CausalDecimator {
 impl CausalDecimator {
 	fn new(source_frequency: f64, cutoff: f64) -> Self {
 		Self {
-			sections: SID_RESAMPLER_BUTTERWORTH_Q.map(|q| {
-				Biquad::low_pass(source_frequency, cutoff, q)
-			}),
+			sections: SID_RESAMPLER_BUTTERWORTH_Q
+				.map(|q| Biquad::low_pass(source_frequency, cutoff, q)),
 			phase: 0,
 		}
 	}
 
 	fn prime(&mut self, sample: f32) {
-		for section in &mut self.sections { section.prime(f64::from(sample)); }
+		for section in &mut self.sections {
+			section.prime(f64::from(sample));
+		}
 		self.phase = 0;
 	}
 
@@ -210,21 +217,26 @@ impl CausalDecimator {
 	/* All four sections run for every intermediate sample; integer decimation occurs only after the anti-aliasing cascade has updated its state. */
 	fn input(&mut self, sample: f32) -> Option<i32> {
 		let mut filtered = f64::from(sample);
-		for section in &mut self.sections { filtered = section.process(filtered); }
+		for section in &mut self.sections {
+			filtered = section.process(filtered);
+		}
 		self.phase += 1;
-		if self.phase < SID_RESAMPLER_SECOND_DECIMATION { return None; }
+		if self.phase < SID_RESAMPLER_SECOND_DECIMATION {
+			return None;
+		}
 		self.phase = 0;
-		Some(filtered.round().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
+		Some(filtered.round() as i32)
 	}
 
 	fn reset(&mut self) {
-		for section in &mut self.sections { section.reset(); }
+		for section in &mut self.sections {
+			section.reset();
+		}
 		self.phase = 0;
 	}
 }
 
-/* AudioRateConverter separates high-quality fractional conversion from cheap integer decimation. Every SID-cycle sample is accepted in order, and an output is returned only when the two-stage clock schedule reaches a host sample boundary. */
-/* AudioRateConverter preserves SID-cycle causality while translating the fixed PAL clock to 44.1 kHz. A fractional polyphase FIR first produces a 176.4 kHz stream, then a causal low-pass stage decimates by four. */
+/* AudioRateConverter preserves SID-cycle causality while translating the fixed PAL clock to the active host rate. Every SID-cycle sample is accepted in order; a fractional polyphase FIR first produces a four-times oversampled stream, then a causal low-pass stage decimates by four and yields output only on host sample boundaries. */
 pub struct AudioRateConverter {
 	/* Rational cycle-to-intermediate-rate conversion with phase-indexed FIR coefficients. */
 	first: FractionalFirStage,
@@ -238,20 +250,24 @@ pub struct AudioRateConverter {
 impl AudioRateConverter {
 	/* Construction derives both conversion stages from the emulated clock and requested host rate, keeping sample timing stable when the frontend changes audio devices. */
 	pub fn new(clock_frequency: f64, sampling_frequency: f64) -> Self {
-		assert_eq!(sampling_frequency.round() as u64, 44_100);
-		assert_eq!(SID_RESAMPLER_INTERMEDIATE_HZ.round() as u64,
-			sampling_frequency.round() as u64 * SID_RESAMPLER_SECOND_DECIMATION);
+		let sampling_frequency = sampling_frequency.round();
+		assert!(sampling_frequency > 0.0);
+		let intermediate_frequency = sampling_frequency * SID_RESAMPLER_SECOND_DECIMATION as f64;
+		/* The pass-band remains capped at the analogue design target while also staying
+		 * below the Nyquist limit of the selected host rate. This keeps the 44.1 kHz
+		 * response unchanged and permits native 48 kHz WASAPI endpoints without a
+		 * second frontend resampler or a mismatched stream clock. */
+		let host_nyquist_margin = sampling_frequency * 0.45;
+		let first_cutoff = SID_RESAMPLER_FIRST_CUTOFF_HZ.min(host_nyquist_margin);
+		let second_cutoff = SID_RESAMPLER_SECOND_CUTOFF_HZ.min(host_nyquist_margin);
 		Self {
 			first: FractionalFirStage::new(
 				clock_frequency,
-				SID_RESAMPLER_INTERMEDIATE_HZ,
-				SID_RESAMPLER_FIRST_CUTOFF_HZ,
+				intermediate_frequency,
+				first_cutoff,
 				SID_RESAMPLER_FIRST_TAPS,
 			),
-			second: CausalDecimator::new(
-				SID_RESAMPLER_INTERMEDIATE_HZ,
-				SID_RESAMPLER_SECOND_CUTOFF_HZ,
-			),
+			second: CausalDecimator::new(intermediate_frequency, second_cutoff),
 			prime_first: true,
 			prime_second: true,
 		}

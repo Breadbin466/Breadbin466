@@ -1,3 +1,7 @@
+// =======================================================
+// src/reu/memory.rs — Commodore 1764 expansion DRAM
+// =======================================================
+
 /*
  * Commodore 1764 expansion DRAM.
  *
@@ -26,10 +30,12 @@ pub(crate) struct ReuMemory {
 
 impl ReuMemory {
 	/* A newly attached 1764 begins with a deterministic zeroed image.  This is a
-	   host-side construction policy only; subsequent controller resets preserve
-	   the contents exactly. */
+	host-side construction policy only; subsequent controller resets preserve
+	the contents exactly. */
 	pub(crate) fn new() -> Self {
-		Self { bytes: vec![0; REU_1764_CAPACITY_BYTES].into_boxed_slice() }
+		Self {
+			bytes: vec![0; REU_1764_CAPACITY_BYTES].into_boxed_slice(),
+		}
 	}
 
 	#[inline]
@@ -54,5 +60,7 @@ impl ReuMemory {
 }
 
 impl Default for ReuMemory {
-	fn default() -> Self { Self::new() }
+	fn default() -> Self {
+		Self::new()
+	}
 }

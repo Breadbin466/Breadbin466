@@ -2,32 +2,31 @@
 // src/emulator/application.rs — Winit Event Loop Handler
 // =======================================================
 
-use winit::application::ApplicationHandler;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::WindowId;
-use winit::event::WindowEvent;
-use winit::keyboard::{KeyCode, PhysicalKey};
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-use winit::keyboard::ModifiersState;
-use winit::event::MouseButton;
-#[cfg(target_os = "linux")]
-use winit::platform::x11::EventLoopBuilderExtX11;
 use crate::ui::MenuManager;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use crate::ui::menu::{MenuKey, MenuModifier};
 #[cfg(target_os = "linux")]
 use crate::ui::shell::Shell;
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use winit::keyboard::ModifiersState;
+use winit::keyboard::{KeyCode, PhysicalKey};
+#[cfg(target_os = "linux")]
+use winit::platform::x11::EventLoopBuilderExtX11;
+use winit::window::WindowId;
 
 use super::Result;
-use crate::emulator::command_line::CommandLine;
 use super::orchestrator::Orchestrator;
+use crate::emulator::command_line::CommandLine;
 
 /* Breadbin owns the native event-loop state. The emulation stack is created only after the platform reports that the application has resumed, which keeps window and GPU construction on the thread and lifecycle boundary required by the desktop backend. */
 pub struct Breadbin {
 	command_line: CommandLine,
 	orchestrator: Option<Orchestrator>,
 	#[cfg(any(target_os = "windows", target_os = "linux"))]
-	modifiers:    ModifiersState,
+	modifiers: ModifiersState,
 }
 
 impl Breadbin {
@@ -66,7 +65,12 @@ impl ApplicationHandler for Breadbin {
 	}
 
 	/* Native window events are routed by window ownership before they reach emulator input. Inspector events are consumed locally, while main-window events may mutate input state, media state or presentation state. */
-	fn window_event(&mut self, application: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
+	fn window_event(
+		&mut self,
+		application: &ActiveEventLoop,
+		window_id: WindowId,
+		event: WindowEvent,
+	) {
 		let o = match self.orchestrator.as_mut() {
 			Some(driver) => driver,
 			None => return,
@@ -96,7 +100,9 @@ impl ApplicationHandler for Breadbin {
 
 		match event {
 			WindowEvent::CloseRequested => {
-				application.exit();
+				if o.context.prepare_shutdown() {
+					application.exit();
+				}
 			}
 			WindowEvent::RedrawRequested => {
 				if let Err(_) = o.draw_frame() {
@@ -116,7 +122,9 @@ impl ApplicationHandler for Breadbin {
 			WindowEvent::ModifiersChanged(modifiers) => {
 				self.modifiers = modifiers.state();
 			}
-			WindowEvent::KeyboardInput { event: key_event, .. } => {
+			WindowEvent::KeyboardInput {
+				event: key_event, ..
+			} => {
 				if let PhysicalKey::Code(key_code) = key_event.physical_key {
 					if key_event.state == winit::event::ElementState::Pressed
 						&& !key_event.repeat
@@ -170,9 +178,7 @@ impl ApplicationHandler for Breadbin {
 			}
 			WindowEvent::MouseInput { state, button, .. } => {
 				let pressed = state == winit::event::ElementState::Pressed;
-				if pressed && button == MouseButton::Left {
-					o.handle_mouse_click();
-				}
+				o.handle_mouse_button(button, pressed);
 			}
 			WindowEvent::DroppedFile(path) => {
 				o.handle_drop(path);
@@ -185,8 +191,23 @@ impl ApplicationHandler for Breadbin {
 	fn about_to_wait(&mut self, application: &ActiveEventLoop) {
 		#[cfg(target_os = "linux")]
 		if Shell::close_requested() {
-			application.exit();
-			return;
+			let can_exit = self
+				.orchestrator
+				.as_mut()
+				.map(|orchestrator| orchestrator.context.prepare_shutdown())
+				.unwrap_or(true);
+			if can_exit {
+				application.exit();
+				return;
+			}
+			Shell::clear_close_requested();
+		}
+
+		#[cfg(target_os = "linux")]
+		while let Some((key, state)) = Shell::poll_key_event() {
+			if let Some(o) = self.orchestrator.as_mut() {
+				o.handle_input_event(key, state);
+			}
 		}
 
 		while let Some(id) = MenuManager::poll_event() {
@@ -199,17 +220,32 @@ impl ApplicationHandler for Breadbin {
 			o.context.menu.pump();
 			o.update();
 
+			if o.quit_time_reached() {
+				if o.context.prepare_shutdown() {
+					application.exit();
+					return;
+				}
+			}
+
 			if o.inspector_requested {
 				o.inspector_requested = false;
 				o.open_inspector(application);
 			}
 
 			if o.context.input.close_requested {
-				application.exit();
+				if o.context.prepare_shutdown() {
+					application.exit();
+				} else {
+					o.context.input.close_requested = false;
+				}
 			}
 		}
 
-		let paused = self.orchestrator.as_ref().map(|o| o.paused).unwrap_or(false);
+		let paused = self
+			.orchestrator
+			.as_ref()
+			.map(|o| o.paused)
+			.unwrap_or(false);
 		application.set_control_flow(if paused {
 			ControlFlow::Wait
 		} else {

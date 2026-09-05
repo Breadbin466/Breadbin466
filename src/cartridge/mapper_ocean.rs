@@ -2,8 +2,8 @@
 // src/cartridge/mapper_ocean.rs — Ocean cartridge mapper
 // =======================================================
 
-use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 use super::bank_storage::BankStorage;
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 /* OceanMapper selects one 8 KiB bank through IO1 and maps the selected image into the window defined by the CRT layout. Bank bits and disable behaviour remain mapper state rather than motherboard policy. */
 pub struct OceanMapper {
@@ -33,25 +33,33 @@ impl CartridgeMapper for OceanMapper {
 	}
 
 	fn read_roml(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.rom.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.rom
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn peek_roml(&self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.rom.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.rom
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_romh(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
 		if !self.is_16k {
 			return None;
 		}
-		self.rom.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.rom
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn peek_romh(&self, offset: u16, _cycle: u64) -> Option<u8> {
 		if !self.is_16k {
 			return None;
 		}
-		self.rom.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.rom
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_io(&mut self, _addr: u16, _cycle: u64) -> Option<u8> {

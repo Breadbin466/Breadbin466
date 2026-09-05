@@ -6,7 +6,7 @@ use crate::clockchip::constants::CPU_FREQ_HZ as PAL_CPU_FREQ_HZ;
 
 /* The motherboard uses the integer PAL CPU rate for cycle-domain peripherals whose counters do not require fractional host time. */
 pub(crate) const CPU_FREQ_HZ: u32 = PAL_CPU_FREQ_HZ as u32;
-/* Audio conversion keeps positive and negative 16-bit ranges distinct, while THRESHOLD rejects small DC-centred excursions before they reach the host stream. */
+/* Audio conversion keeps positive and negative 16-bit ranges distinct. THRESHOLD is the soft-limiter knee in that host-domain range; ordinary SID output is scaled to remain below it. */
 pub(crate) const THRESHOLD: i64 = 28_000;
 pub(crate) const NEGATIVE_RANGE: f64 = 32_768.0;
 pub(crate) const POSITIVE_RANGE: f64 = 32_767.0;

@@ -2,20 +2,20 @@
 // src/motherboard/injection.rs — Hardware Injections and Line Switches
 // =======================================================
 
-use std::collections::VecDeque;
 use super::bus::Motherboard;
 use super::constants::{READY_PATTERN, READY_POSITIONS};
+use std::collections::VecDeque;
 
 #[derive(Debug, PartialEq, Eq)]
 enum InjectionState {
 	/* No programme is queued. */
 	Idle,
-	/* A programme is queued but the boot delay has not elapsed. */
+	/* A programme is queued while the KERNAL/BASIC startup is incomplete. */
 	Waiting,
 	/* The machine is considered stable enough for direct RAM injection. */
 	Ready,
 	/* The queued injection has been consumed. */
-	Done
+	Done,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoadFirstRunState {
@@ -66,17 +66,15 @@ impl ActionManager {
 		self.ready_baseline.fill(false);
 	}
 
-	/* Direct injection is deferred until the machine has passed the conservative boot threshold. Requests made later can enter the ready state immediately. */
+	/* Direct injection waits for both a conservative frame threshold and a
+	 * visible BASIC READY. prompt. Host speed therefore cannot make injection
+	 * race the emulated KERNAL startup. */
 	pub fn schedule_injection(&mut self, data: Vec<u8>, autorun: bool) {
 		println!("Scheduling PRG injection...");
 		self.pending_prg = Some(data);
 		self.pending_autorun = autorun;
 
-		if self.boot_frames > 120 {
-			self.inject_state = InjectionState::Ready;
-		} else {
-			self.inject_state = InjectionState::Waiting;
-		}
+		self.inject_state = InjectionState::Waiting;
 	}
 
 	/* Normal text entry becomes eligible on the current frame and is drained through the ten-byte KERNAL keyboard queue. */
@@ -123,7 +121,7 @@ impl ActionManager {
 
 		match self.inject_state {
 			InjectionState::Waiting => {
-				if self.boot_frames > 120 {
+				if self.boot_frames > 120 && Self::machine_ready(machine) {
 					self.inject_state = InjectionState::Ready;
 				}
 			}
@@ -147,6 +145,14 @@ impl ActionManager {
 		}
 	}
 
+	/* BASIC is ready either when its prompt is visible or when the CPU is in
+	 * the KERNAL keyboard-wait loop used by the PAL 901227-03 ROM. Combining
+	 * both observations makes direct injection independent of VIC visibility. */
+	fn machine_ready(machine: &Motherboard) -> bool {
+		(0xE5CF..=0xE5D4).contains(&machine.cpu.pc)
+			|| Self::ready_positions(machine).iter().any(|ready| *ready)
+	}
+
 	/* The baseline is captured only after the LOAD command has fully entered the keyboard buffer. A later false-to-true READY. transition then identifies completion of that load rather than the prompt that existed before it. */
 	fn tick_load_first_run(&mut self, machine: &mut Motherboard) {
 		match self.load_first_run_state {
@@ -156,7 +162,8 @@ impl ActionManager {
 			}
 			LoadFirstRunState::WaitingForNewReady => {
 				let current = Self::ready_positions(machine);
-				let new_ready = current.iter()
+				let new_ready = current
+					.iter()
 					.zip(self.ready_baseline.iter())
 					.any(|(now, before)| *now && !*before);
 				if new_ready {
@@ -177,7 +184,10 @@ impl ActionManager {
 
 		for offset in 0..READY_POSITIONS {
 			let matches = READY_PATTERN.iter().enumerate().all(|(index, expected)| {
-				machine.memory.read_ram(screen_base.wrapping_add((offset + index) as u16)) == *expected
+				machine
+					.memory
+					.read_ram(screen_base.wrapping_add((offset + index) as u16))
+					== *expected
 			});
 			result[offset] = matches;
 		}

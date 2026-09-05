@@ -5,78 +5,82 @@
 use super::constants::{
 	DISK_ABSENT_CYCLES, DISK_CHANGE_CYCLES, DISK_INSERTING_CYCLES,
 	DRIVE_MASTER_CYCLES_PER_ROTATION, DRIVE_MASTER_PER_CPU, DRIVE_RESET_HALF_TRACK,
-	G64_CELL_CYCLES, G64_HEADER_LEN, G64_MAX_HALF_TRACKS, G64_SIGNATURE,
-	SPURIOUS_FLUX_INTERVAL_MIN, SPURIOUS_FLUX_INTERVAL_SPAN, NOISE_PRNG_MASK, NOMINAL_TRACK_BYTES,
-	POST_FLUX_SETTLING_MIN, POST_FLUX_SETTLING_SPAN,
+	G64_CELL_CYCLES, NOISE_PRNG_MASK, POST_FLUX_SETTLING_MIN, POST_FLUX_SETTLING_SPAN,
+	SPURIOUS_FLUX_INTERVAL_MIN, SPURIOUS_FLUX_INTERVAL_SPAN,
 };
-use std::fs::{self, File};
-use std::io::Write;
+use super::media::{DiskFormat, TrackSpeed};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::thread::{self, JoinHandle};
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::path::{Path, PathBuf};
-use super::{gcr, nib};
+use std::thread::JoinHandle;
 
-static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+pub(super) static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-include!("media.rs");
+pub(super) struct PendingG64Layout {
+	pub(super) track_offsets: Vec<Option<usize>>,
+	pub(super) speed_offsets: Vec<Option<usize>>,
+	pub(super) max_track_size: usize,
+}
+
+pub(super) struct PendingWrite {
+	pub(super) generation: u64,
+	pub(super) handle: JoinHandle<bool>,
+	pub(super) original_file: Vec<u8>,
+	pub(super) g64_layout: Option<PendingG64Layout>,
+}
 
 /* DiskMechanism keeps rotational position, head position, read-channel state and writable track data in one timeline. Byte-ready and sync are consequences of flux-cell timing, not sector-level shortcuts. */
 pub struct DiskMechanism {
-
 	/* Circular GCR images and optional per-byte speed maps form the medium currently passing under the head. */
-	tracks: Vec<Vec<u8>>,
-	track_speed: Vec<TrackSpeed>,
-	num_tracks: u8,
-	disk_present: bool,
-	write_protect: bool,
-	dirty: bool,
-	dirty_tracks: Vec<bool>,
-	dirty_track_anchor_bits: Vec<usize>,
-	flush_retry_deferred: bool,
+	pub(super) tracks: Vec<Vec<u8>>,
+	pub(super) track_speed: Vec<TrackSpeed>,
+	pub(super) num_tracks: u8,
+	pub(super) disk_present: bool,
+	pub(super) write_protect: bool,
+	pub(super) dirty: bool,
+	pub(super) dirty_tracks: Vec<bool>,
+	pub(super) dirty_track_anchor_bits: Vec<usize>,
+	pub(super) flush_retry_deferred: bool,
 
 	/* Persistence metadata is kept separate from live rotational state so flushing cannot redefine what the head is currently seeing. */
-	mount_path: Option<PathBuf>,
-	original_file: Option<Vec<u8>>,
-	track_offsets_g64: Vec<Option<usize>>,
-	speed_offsets_g64: Vec<Option<usize>>,
-	max_track_size_g64: usize,
-	format: Option<DiskFormat>,
-	write_pending: bool,
-	pending_writer: Option<JoinHandle<()>>,
-	current_generation: u64,
-	persisted_generation: Arc<AtomicU64>,
+	pub(super) mount_path: Option<PathBuf>,
+	pub(super) original_file: Option<Vec<u8>>,
+	pub(super) track_offsets_g64: Vec<Option<usize>>,
+	pub(super) speed_offsets_g64: Vec<Option<usize>>,
+	pub(super) max_track_size_g64: usize,
+	pub(super) format: Option<DiskFormat>,
+	pub(super) write_pending: bool,
+	pub(super) pending_writer: Option<PendingWrite>,
+	pub(super) current_generation: u64,
+	pub(super) persisted_generation: AtomicU64,
 
 	/* Mechanical state survives media replacement and advances independently of whether a formatted track exists at that position. */
-	half_track: u8,
-	prev_phase: u8,
-	phase_output: u8,
-	motor_latched: bool,
+	pub(super) half_track: u8,
+	pub(super) prev_phase: u8,
+	pub(super) phase_output: u8,
+	pub(super) motor_latched: bool,
 
 	/* Decoder state follows the serial bit stream continuously; byte-ready is produced only after eight qualified bit cells. */
-	byte_pos: usize,
-	bit_pos: u8,
-	rotation_numerator: u64,
-	phase_track_length: usize,
-	phase_track_variable_speed: bool,
-	bit_cell_divider: u8,
-	decoder_phase: u8,
-	byte_bit_count: u8,
+	pub(super) byte_pos: usize,
+	pub(super) bit_pos: u8,
+	pub(super) rotation_numerator: u64,
+	pub(super) phase_track_length: usize,
+	pub(super) phase_track_variable_speed: bool,
+	pub(super) bit_cell_divider: u8,
+	pub(super) decoder_phase: u8,
+	pub(super) byte_bit_count: u8,
 
-	read_shift_register: u16,
-	sync_active: bool,
-	write_read_shift_register: u8,
-	was_writing: bool,
+	pub(super) read_shift_register: u16,
+	pub(super) sync_active: bool,
+	pub(super) write_read_shift_register: u8,
+	pub(super) was_writing: bool,
 
-	latched: u8,
-	byte_ready: bool,
+	pub(super) latched: u8,
+	pub(super) byte_ready: bool,
 
 	/* Disk-change timing and deterministic read-amplifier noise model the period in which no trustworthy flux is available. */
-	disk_change_cycles: u32,
-	next_spurious_flux_cycles: u32,
-	noise_prng_state: u32,
-
+	pub(super) disk_change_cycles: u32,
+	pub(super) next_spurious_flux_cycles: u32,
+	pub(super) noise_prng_state: u32,
 }
 
 impl DiskMechanism {
@@ -101,7 +105,7 @@ impl DiskMechanism {
 			write_pending: false,
 			pending_writer: None,
 			current_generation: 0,
-			persisted_generation: Arc::new(AtomicU64::new(0)),
+			persisted_generation: AtomicU64::new(0),
 			half_track: DRIVE_RESET_HALF_TRACK,
 			prev_phase: 0,
 			phase_output: 0,
@@ -126,7 +130,7 @@ impl DiskMechanism {
 		}
 	}
 	/* Replacing media preserves spindle phase and head position so disk insertion changes the medium without teleporting the mechanism. */
-	fn inherit_runtime_state(&mut self, previous: &Self) {
+	pub(super) fn inherit_runtime_state(&mut self, previous: &Self) {
 		self.half_track = previous.half_track;
 		self.prev_phase = previous.prev_phase;
 		self.phase_output = previous.phase_output;
@@ -147,7 +151,7 @@ impl DiskMechanism {
 		self.noise_prng_state = previous.noise_prng_state;
 	}
 	/* Track replacement may change the circular bit length; normalisation preserves the nearest equivalent angular position in the new image. */
-	fn normalise_runtime_position(&mut self) {
+	pub(super) fn normalise_runtime_position(&mut self) {
 		self.refresh_phase_track_metadata();
 		if self.phase_track_length == 0 {
 			return;
@@ -163,7 +167,7 @@ impl DiskMechanism {
 		self.bit_pos = (bit_position % 8) as u8;
 	}
 	/* Decoder reset clears byte assembly and sync detection without moving the head or spindle to an artificial index position. */
-	fn reset_decoder(&mut self) {
+	pub(super) fn reset_decoder(&mut self) {
 		self.rotation_numerator = 0;
 		self.refresh_phase_track_metadata();
 		if self.phase_track_length != 0 {
@@ -185,7 +189,8 @@ impl DiskMechanism {
 		self.was_writing = false;
 		self.latched = 0;
 		self.byte_ready = false;
-		let next_spurious_flux_cycles = self.next_noise_interval(POST_FLUX_SETTLING_MIN, POST_FLUX_SETTLING_SPAN);
+		let next_spurious_flux_cycles =
+			self.next_noise_interval(POST_FLUX_SETTLING_MIN, POST_FLUX_SETTLING_SPAN);
 		self.next_spurious_flux_cycles = next_spurious_flux_cycles;
 	}
 	#[inline(always)]
@@ -200,7 +205,8 @@ impl DiskMechanism {
 	}
 	#[inline(always)]
 	fn schedule_post_flux_settling(&mut self) {
-		let next_spurious_flux_cycles = self.next_noise_interval(POST_FLUX_SETTLING_MIN, POST_FLUX_SETTLING_SPAN);
+		let next_spurious_flux_cycles =
+			self.next_noise_interval(POST_FLUX_SETTLING_MIN, POST_FLUX_SETTLING_SPAN);
 		self.next_spurious_flux_cycles = next_spurious_flux_cycles;
 	}
 	#[inline(always)]
@@ -211,7 +217,8 @@ impl DiskMechanism {
 		}
 		if self.next_spurious_flux_cycles == 0 {
 			self.restart_bit_cell_clock(density);
-			let next_spurious_flux_cycles = self.next_noise_interval(SPURIOUS_FLUX_INTERVAL_MIN, SPURIOUS_FLUX_INTERVAL_SPAN);
+			let next_spurious_flux_cycles =
+				self.next_noise_interval(SPURIOUS_FLUX_INTERVAL_MIN, SPURIOUS_FLUX_INTERVAL_SPAN);
 			self.next_spurious_flux_cycles = next_spurious_flux_cycles;
 		}
 	}
@@ -226,28 +233,30 @@ impl DiskMechanism {
 	}
 }
 
-include!("load.rs");
-include!("save.rs");
-include!("mechanics.rs");
-include!("disk_rotation.rs");
-include!("read_channel.rs");
-
 impl DiskMechanism {
-	/* An immediate flush first joins any older writer so generations reach the host file in the same order they were produced. */
+	/* An immediate flush first resolves any older writer so generations reach the host file in the same order they were produced. */
 	pub fn flush_now(&mut self) -> bool {
-		if let Some(handle) = self.pending_writer.take() {
-			let _ = handle.join();
-		}
+		let previous_succeeded = self.finish_pending_writer(true);
 		if !self.write_pending {
-			return true;
+			return previous_succeeded;
 		}
+		self.flush_retry_deferred = false;
 		self.flush_to_disk(false)
 	}
 	pub fn flush_pending(&self) -> bool {
 		self.write_pending
 	}
-	/* Deferred flushing waits until the write gate is inactive; a failed background attempt is not retried every emulated cycle. */
+	/* Deferred flushing waits until the write gate is inactive. A completed background writer is reconciled on the drive thread before another generation can be launched. */
 	pub fn service_flush(&mut self) -> bool {
+		if self.pending_writer.is_some() {
+			if !self.finish_pending_writer(false) {
+				self.flush_retry_deferred = true;
+				return false;
+			}
+			if self.pending_writer.is_some() {
+				return true;
+			}
+		}
 		if !self.write_pending || self.was_writing || self.flush_retry_deferred {
 			return true;
 		}
@@ -298,9 +307,7 @@ impl DiskMechanism {
 
 		let selected_density = density & 0x03;
 		let requested_write_mode = write_mode;
-		if self.tracks[track_index].is_empty()
-			&& !requested_write_mode
-		{
+		if self.tracks[track_index].is_empty() && !requested_write_mode {
 			self.finish_write_burst();
 			for _ in 0..DRIVE_MASTER_PER_CPU {
 				self.advance_empty_track_rotation();
@@ -359,7 +366,8 @@ impl DiskMechanism {
 		for _ in 0..DRIVE_MASTER_PER_CPU {
 			if !effective_write_mode {
 				if variable_speed {
-					if let Some(playback_density) = self.playback_density_for_next_bit(track_index) {
+					if let Some(playback_density) = self.playback_density_for_next_bit(track_index)
+					{
 						self.rotation_numerator = self.rotation_numerator.wrapping_add(1);
 						let cell_cycles = G64_CELL_CYCLES[playback_density as usize];
 						if self.rotation_numerator >= cell_cycles {
@@ -371,7 +379,8 @@ impl DiskMechanism {
 						}
 					}
 				} else {
-					self.rotation_numerator = self.rotation_numerator.wrapping_add(constant_track_bits);
+					self.rotation_numerator =
+						self.rotation_numerator.wrapping_add(constant_track_bits);
 					while self.rotation_numerator >= DRIVE_MASTER_CYCLES_PER_ROTATION {
 						self.rotation_numerator -= DRIVE_MASTER_CYCLES_PER_ROTATION;
 						if self.read_track_bit(track_index) {

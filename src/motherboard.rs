@@ -4,9 +4,9 @@
 
 /* The motherboard façade exposes the cycle orchestrator and keeps scheduling and KERNAL-assisted injection as supporting responsibilities. */
 
-pub(crate) mod constants;
 pub mod bus;
-pub mod scheduler;
+pub(crate) mod constants;
 pub mod injection;
+pub mod scheduler;
 
-pub use bus::{Motherboard, DebugBusAccess, DebugBusAccessKind};
+pub use bus::{DebugBusAccess, DebugBusAccessKind, Motherboard};

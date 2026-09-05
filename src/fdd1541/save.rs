@@ -2,17 +2,39 @@
 // src/fdd1541/save.rs — Disk image persistence and atomic writes
 // =======================================================
 
+use super::constants::{G64_HEADER_LEN, G64_MAX_HALF_TRACKS, G64_SIGNATURE};
+use super::disk_drive::{DiskMechanism, PendingG64Layout, PendingWrite, TEMP_FILE_COUNTER};
+use super::media::{DiskFormat, TrackSpeed, sector_offset, total_sectors};
+use super::{d7z, gcr, nib};
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::Path;
+use std::sync::atomic::Ordering;
+use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 impl DiskMechanism {
-	/* Persistence writes a complete replacement beside the target and renames it only after success, so an interrupted save cannot leave a half-written image. */
-/* Atomic persistence writes and flushes a complete sibling file before replacing the destination. */
+	/* Atomic persistence writes and flushes a complete sibling file before replacing the destination, so an interrupted save cannot leave a half-written image. */
 	fn write_atomic(path: &Path, buffer: &[u8]) -> bool {
 		let parent = path.parent().unwrap_or_else(|| Path::new("."));
-		let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("disk");
-		let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_nanos()).unwrap_or(0);
+		let name = path
+			.file_name()
+			.and_then(|value| value.to_str())
+			.unwrap_or("disk");
+		let nonce = SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.map(|value| value.as_nanos())
+			.unwrap_or(0);
 		let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
 		let unique = format!("{}.{}.{}.{}.tmp", name, std::process::id(), nonce, counter);
 		let temporary = parent.join(unique);
-		let backup = parent.join(format!("{}.{}.{}.{}.bak", name, std::process::id(), nonce, counter));
+		let backup = parent.join(format!(
+			"{}.{}.{}.{}.bak",
+			name,
+			std::process::id(),
+			nonce,
+			counter
+		));
 
 		let write_result = (|| -> std::io::Result<()> {
 			let mut file = File::create(&temporary)?;
@@ -50,31 +72,85 @@ impl DiskMechanism {
 
 		true
 	}
-	fn commit_buffer(&mut self, path: &Path, buffer: &[u8], background: bool) -> bool {
+	fn apply_persisted_snapshot(
+		&mut self,
+		generation: u64,
+		original_file: Vec<u8>,
+		g64_layout: Option<PendingG64Layout>,
+	) {
+		self.original_file = Some(original_file);
+		if let Some(layout) = g64_layout {
+			self.track_offsets_g64 = layout.track_offsets;
+			self.speed_offsets_g64 = layout.speed_offsets;
+			self.max_track_size_g64 = layout.max_track_size;
+		}
+		self.persisted_generation
+			.store(generation, Ordering::Release);
+
+		if self.current_generation == generation {
+			self.write_pending = false;
+			self.dirty = false;
+			self.dirty_tracks.fill(false);
+			self.flush_retry_deferred = false;
+		}
+	}
+
+	pub(super) fn finish_pending_writer(&mut self, wait: bool) -> bool {
+		let Some(pending) = self.pending_writer.as_ref() else {
+			return true;
+		};
+		if !wait && !pending.handle.is_finished() {
+			return true;
+		}
+
+		let pending = self
+			.pending_writer
+			.take()
+			.expect("pending writer disappeared while owned");
+		let success = pending.handle.join().unwrap_or(false);
+		if success {
+			self.apply_persisted_snapshot(
+				pending.generation,
+				pending.original_file,
+				pending.g64_layout,
+			);
+		}
+		success
+	}
+
+	fn commit_buffer(
+		&mut self,
+		path: &Path,
+		buffer: &[u8],
+		background: bool,
+		original_file: Vec<u8>,
+		g64_layout: Option<PendingG64Layout>,
+	) -> bool {
 		let generation = self.current_generation;
 		if !background {
 			let success = Self::write_atomic(path, buffer);
 			if success {
-				self.persisted_generation.store(generation, Ordering::Release);
+				self.apply_persisted_snapshot(generation, original_file, g64_layout);
 			}
 			return success;
 		}
 
-		if let Some(handle) = self.pending_writer.take() {
-			let _ = handle.join();
+		if self.pending_writer.is_some() {
+			return false;
 		}
 		let owned_path = path.to_path_buf();
 		let owned_buffer = buffer.to_vec();
-		let persisted_generation = Arc::clone(&self.persisted_generation);
-		self.pending_writer = Some(thread::spawn(move || {
-			if Self::write_atomic(&owned_path, &owned_buffer) {
-				persisted_generation.store(generation, Ordering::Release);
-			}
-		}));
+		let handle = thread::spawn(move || Self::write_atomic(&owned_path, &owned_buffer));
+		self.pending_writer = Some(PendingWrite {
+			generation,
+			handle,
+			original_file,
+			g64_layout,
+		});
 		true
 	}
-/* Flush follows the mounted format: logical D64 images require sector reconstruction, while physical formats serialise track state directly. */
-	fn flush_to_disk(&mut self, background: bool) -> bool {
+	/* Flush follows the mounted format: logical D64 images require sector reconstruction, while physical formats serialise track state directly. */
+	pub(super) fn flush_to_disk(&mut self, background: bool) -> bool {
 		if self.write_protect {
 			self.write_pending = false;
 			self.dirty = false;
@@ -84,22 +160,19 @@ impl DiskMechanism {
 		}
 
 		let success = match self.format {
-			Some(DiskFormat::D64) => self.flush_d64(background),
+			Some(DiskFormat::D64) | Some(DiskFormat::D7z) => self.flush_d64(background),
 			Some(DiskFormat::G64) => self.flush_g64(background),
 			Some(DiskFormat::Nib) => self.flush_nib(background, false),
 			Some(DiskFormat::Nbz) => self.flush_nib(background, true),
 			None => true,
 		};
 
-		if success {
+		if success && !background {
 			self.flush_retry_deferred = false;
-			self.write_pending = false;
-			self.dirty = false;
-			self.dirty_tracks.fill(false);
 		}
 		success
 	}
-/* Directory persistence is delayed while the drive is between the paired writes commonly used for a directory-sector update. */
+	/* Directory persistence is delayed while the drive is between the paired writes commonly used for a directory-sector update. */
 	fn directory_sector_is_stable(sector: &[u8; 256]) -> bool {
 		for entry in 0..8 {
 			let offset = 2 + entry * 32;
@@ -114,7 +187,8 @@ impl DiskMechanism {
 		let Some(path) = self.mount_path.clone() else {
 			return false;
 		};
-		let densities: Vec<u8> = self.track_speed
+		let densities: Vec<u8> = self
+			.track_speed
 			.iter()
 			.map(|speed| match speed {
 				TrackSpeed::Constant(density) => *density & 0x03,
@@ -133,13 +207,9 @@ impl DiskMechanism {
 			None
 		};
 		let output = compressed_buffer.as_deref().unwrap_or(&nib_buffer);
+		let persisted_snapshot = nib_buffer.clone();
 
-		if !self.commit_buffer(&path, output, background) {
-			return false;
-		}
-
-		self.original_file = Some(nib_buffer);
-		true
+		self.commit_buffer(&path, output, background, persisted_snapshot, None)
 	}
 	/* Saving D64 decodes the current physical tracks back into sectors. Tracks that cannot be represented losslessly remain a persistence failure rather than being silently normalised. */
 	fn flush_d64(&mut self, background: bool) -> bool {
@@ -149,7 +219,7 @@ impl DiskMechanism {
 		let Some(mut buffer) = self.original_file.clone() else {
 			return false;
 		};
-		let mut committed_track = vec![false; self.dirty_tracks.len()];
+		let mut decoded_dirty_track = false;
 		let mut committed_sector = false;
 		let mut directory_stable = true;
 
@@ -157,36 +227,44 @@ impl DiskMechanism {
 			if !self.dirty_tracks[index] {
 				continue;
 			}
+
+			/* D64 has one logical track per whole-track position. A modified half-track or a track outside the mounted D64 geometry cannot be represented without discarding physical state, so persistence must remain pending. */
 			if index & 1 != 0 {
-				continue;
+				return false;
 			}
 
 			let track = (index / 2 + 1) as u8;
 			if track > self.num_tracks {
-				continue;
+				return false;
 			}
 			let Some(raw_track) = self.tracks.get(index) else {
-				continue;
+				return false;
 			};
-			let anchor = self.dirty_track_anchor_bits.get(index).copied().unwrap_or(0);
+			let anchor = self
+				.dirty_track_anchor_bits
+				.get(index)
+				.copied()
+				.unwrap_or(0);
 			let Some(sectors) = gcr::decode_track_from(raw_track, track, anchor) else {
-				continue;
+				return false;
 			};
 
 			let expected_sectors = gcr::sectors_per_track(track) as usize;
-			let mut decoded_sector = false;
-			for (sector, sector_data) in sectors.into_iter().take(expected_sectors).enumerate() {
+			if sectors.len() != expected_sectors || sectors.iter().any(Option::is_none) {
+				return false;
+			}
+
+			for (sector, sector_data) in sectors.into_iter().enumerate() {
 				let Some(sector_data) = sector_data else {
-					continue;
+					return false;
 				};
 
-				decoded_sector = true;
 				if track == 18 && sector > 0 && !Self::directory_sector_is_stable(&sector_data) {
 					directory_stable = false;
 				}
 				let offset = sector_offset(track, sector as u8);
 				if offset + 256 > buffer.len() {
-					continue;
+					return false;
 				}
 				if buffer[offset..offset + 256] != sector_data {
 					buffer[offset..offset + 256].copy_from_slice(&sector_data);
@@ -201,32 +279,31 @@ impl DiskMechanism {
 				}
 			}
 
-			if decoded_sector {
-				committed_track[index] = true;
-			}
+			decoded_dirty_track = true;
 		}
 
 		if !directory_stable {
 			return false;
 		}
 		if !committed_sector {
-			return committed_track.iter().any(|value| *value);
-		}
-		if !self.commit_buffer(&path, &buffer, background) {
+			if decoded_dirty_track {
+				self.apply_persisted_snapshot(self.current_generation, buffer, None);
+				return true;
+			}
 			return false;
 		}
-
-		self.original_file = Some(buffer);
-		let limit = self.dirty_tracks.len().min(committed_track.len());
-		let mut index = 0usize;
-		while index < limit {
-			if committed_track[index] {
-				self.dirty_tracks[index] = false;
-			}
-			index += 1;
-		}
-		self.dirty = self.dirty_tracks.iter().any(|value| *value);
-		true
+		let encoded;
+		let output = if self.format == Some(DiskFormat::D7z) {
+			let Some(value) = d7z::encode(&buffer) else {
+				return false;
+			};
+			encoded = value;
+			encoded.as_slice()
+		} else {
+			buffer.as_slice()
+		};
+		let persisted_snapshot = buffer.clone();
+		self.commit_buffer(&path, output, background, persisted_snapshot, None)
 	}
 	/* Saving G64 preserves circular track bytes and density maps, including non-DOS layouts and protection data. */
 	fn flush_g64(&mut self, background: bool) -> bool {
@@ -241,7 +318,10 @@ impl DiskMechanism {
 		let table_size = half_track_count.saturating_mul(4);
 		let speed_table_start = G64_HEADER_LEN.saturating_add(table_size);
 		let tables_end = speed_table_start.saturating_add(table_size);
-		if half_track_count == 0 || half_track_count > G64_MAX_HALF_TRACKS || tables_end > buffer.len() {
+		if half_track_count == 0
+			|| half_track_count > G64_MAX_HALF_TRACKS
+			|| tables_end > buffer.len()
+		{
 			return false;
 		}
 
@@ -259,7 +339,10 @@ impl DiskMechanism {
 			let Some(track_length_end) = track_start.checked_add(track.len()) else {
 				return false;
 			};
-			if track_start < 2 || track.len() > self.max_track_size_g64 || track_length_end > buffer.len() {
+			if track_start < 2
+				|| track.len() > self.max_track_size_g64
+				|| track_length_end > buffer.len()
+			{
 				return false;
 			}
 
@@ -275,7 +358,8 @@ impl DiskMechanism {
 				}
 				Some(TrackSpeed::PerByte(block)) => {
 					let required = track.len().div_ceil(4).max(1);
-					let Some(speed_start) = self.speed_offsets_g64.get(index).copied().flatten() else {
+					let Some(speed_start) = self.speed_offsets_g64.get(index).copied().flatten()
+					else {
 						return self.rebuild_g64(&path, background);
 					};
 					let Some(speed_end) = speed_start.checked_add(required) else {
@@ -290,12 +374,7 @@ impl DiskMechanism {
 			}
 		}
 
-		if !self.commit_buffer(&path, &buffer, background) {
-			return false;
-		}
-
-		self.original_file = Some(buffer);
-		true
+		self.commit_buffer(&path, &buffer, background, buffer.clone(), None)
 	}
 	fn rebuild_g64(&mut self, path: &Path, background: bool) -> bool {
 		let half_track_count = match self.tracks.iter().rposition(|track| !track.is_empty()) {
@@ -354,14 +433,11 @@ impl DiskMechanism {
 			}
 		}
 
-		if !self.commit_buffer(path, &buffer, background) {
-			return false;
-		}
-
-		self.original_file = Some(buffer);
-		self.track_offsets_g64 = track_offsets;
-		self.speed_offsets_g64 = speed_offsets;
-		self.max_track_size_g64 = max_track_size;
-		true
+		let layout = PendingG64Layout {
+			track_offsets,
+			speed_offsets,
+			max_track_size,
+		};
+		self.commit_buffer(path, &buffer, background, buffer.clone(), Some(layout))
 	}
 }

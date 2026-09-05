@@ -2,301 +2,352 @@
 // src/sid/envelope.rs — SID envelope generator
 // =======================================================
 
-use super::constants::envelope_rate_comparator;
+/* SID envelope generator. */
+
+use super::constants::envelope_rate_period;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-/* The envelope has three externally meaningful directions. Sustain remains part of DecaySustain because the level path simply stops at the programmed code while the shared rate and exponential counters continue to run. */
-pub enum EnvelopePhase {
-	/* Linear upward stepping towards full scale. */
-	Attack,
-	/* Exponentially divided downward stepping, held when the sustain code is reached. */
-	DecaySustain,
-	/* Exponentially divided downward stepping after GATE is cleared. */
-	Release,
+enum EnvelopeMotion {
+	Rising,
+	FallingToSustain,
+	FallingToZero,
 }
 
-/* A voice envelope is built from two coupled timing paths: a 15-bit rate divider chooses when an event is due, and an exponential divider decides whether that event may change the eight-bit level. Gate and direction changes are pipelined separately, which is why changing GATE does not instantaneously change the visible envelope trajectory. */
+#[derive(Clone, Copy)]
+struct GateHistory {
+	input: bool,
+	stage_a: bool,
+	stage_b: bool,
+	stage_c: bool,
+}
+
+impl GateHistory {
+	const fn new() -> Self {
+		Self {
+			input: false,
+			stage_a: false,
+			stage_b: false,
+			stage_c: false,
+		}
+	}
+
+	#[inline]
+	fn advance(&mut self) -> Option<bool> {
+		let rose = !self.stage_c && self.stage_b;
+		let fell = self.stage_c && !self.stage_b;
+
+		self.stage_c = self.stage_b;
+		self.stage_b = self.stage_a;
+		self.stage_a = self.input;
+
+		if rose {
+			Some(true)
+		} else if fell {
+			Some(false)
+		} else {
+			None
+		}
+	}
+}
+
+/* The envelope generator owns the eight-bit amplitude code and the timing state that moves it. Register writes alter rate selections and the sustain target without restarting the timing machinery. GATE is sampled through a short control pipeline, while amplitude changes are scheduled through separate rate and exponential timing paths. */
 pub struct Envelope {
-	/* Current eight-bit DAC code exposed to voice conversion. */
 	pub volume: u8,
 
-	attack_rate: u8,
+	rise_rate: u8,
 	decay_rate: u8,
-	sustain_level: u8,
-	release_rate: u8,
+	hold_level: u8,
+	fall_rate: u8,
 
-	gate: bool,
-	phase: EnvelopePhase,
+	gate: GateHistory,
+	motion: EnvelopeMotion,
+	requested_motion: EnvelopeMotion,
+	motion_delay: u8,
 
-	/* Fifteen-bit rate counter implemented as the SID-style LFSR divider. */
-	rate_lfsr: u16,
-	/* Comparator hits arm a separate reset path rather than resetting the divider inline. */
-	rate_reset_armed: bool,
+	/* The physical 15-bit rate LFSR has one 32,767-state orbit. Storing the orbit phase is an exact coordinate transform of that state: phase zero is $7fff and each ordinary PHI2 advance increments the phase. This removes the per-cycle LFSR reconstruction while preserving every comparator event and the free-running divider phase across register changes and reset. */
+	rate_phase: u16,
+	/* The selected comparator position changes only on an ADSR write or a
+	 * motion-pipeline transition.  Caching it removes the rate-selection tree
+	 * from each of the three per-PHI2 envelope clocks. */
+	rate_target_phase: u16,
+	matched_rate: bool,
 
-	level_wait: u8,
-	exponential_wait: u8,
-	exponential_count: u8,
-	exponential_period: u8,
-	period_update: u8,
+	amplitude_delay: u8,
+	curve_delay: u8,
+	curve_count: u8,
+	curve_divisor: u8,
+	queued_curve_divisor: u8,
 
-	/* Once release reaches zero, the level path remains locked until a new attack edge clears it. */
-	zero_lock: bool,
-
-	gate_d0: bool,
-	gate_d1: bool,
-	gate_d2: bool,
-
-	direction_target: EnvelopePhase,
-	direction_progress: u8,
-
-	latched_level: u8,
+	floor_hold: bool,
+	readback: u8,
 }
 
 impl Envelope {
 	pub const fn new() -> Self {
 		Self {
-			attack_rate: 0,
-			decay_rate: 0,
-			sustain_level: 0,
-			release_rate: 0,
-			gate: false,
-			phase: EnvelopePhase::Release,
-			rate_lfsr: 0x7fff,
-			rate_reset_armed: false,
-			level_wait: 0,
-			exponential_wait: 0,
-			exponential_count: 0,
-			exponential_period: 1,
-			period_update: 0,
 			volume: 0xaa,
-			zero_lock: false,
-			gate_d0: false,
-			gate_d1: false,
-			gate_d2: false,
-			direction_target: EnvelopePhase::Release,
-			direction_progress: 0,
-			latched_level: 0xaa,
+			rise_rate: 0,
+			decay_rate: 0,
+			hold_level: 0,
+			fall_rate: 0,
+			gate: GateHistory::new(),
+			motion: EnvelopeMotion::FallingToZero,
+			requested_motion: EnvelopeMotion::FallingToZero,
+			motion_delay: 0,
+			rate_phase: 0,
+			rate_target_phase: (envelope_rate_period(0) - 1) as u16,
+			matched_rate: false,
+			amplitude_delay: 0,
+			curve_delay: 0,
+			curve_count: 0,
+			curve_divisor: 1,
+			queued_curve_divisor: 0,
+			floor_hold: false,
+			readback: 0xaa,
 		}
 	}
 
-	/* Reset preserves the current analogue-visible level and rate-divider phase. The control logic returns to release, matching a chip reset that does not magically discharge the envelope DAC. */
+	/* Reset returns the control paths to their release state without forcing an artificial change in the analogue-visible envelope code or in the free-running rate sequence. */
 	pub fn reset(&mut self) {
-		let preserved_volume = self.volume;
-		let preserved_rate = self.rate_lfsr;
+		let volume = self.volume;
+		let rate_phase = self.rate_phase;
 		*self = Self::new();
-		self.volume = preserved_volume;
-		self.latched_level = preserved_volume;
-		self.rate_lfsr = preserved_rate;
-		self.zero_lock = preserved_volume == 0;
+		self.volume = volume;
+		self.readback = volume;
+		self.rate_phase = rate_phase;
+		self.floor_hold = volume == 0;
 	}
 
-	/* The upper and lower nibbles select independent rate-comparator periods for attack and decay. Updating them does not restart the current phase, so a running counter sees the new period immediately (C64-PRG-1982, SID envelope registers). */
+	/* The attack/decay register selects the rising rate with its upper nibble and the programmed-decay rate with its lower nibble. */
 	pub fn set_attack_decay(&mut self, value: u8) {
-		self.attack_rate = value >> 4;
+		self.rise_rate = value >> 4;
 		self.decay_rate = value & 0x0f;
+		self.refresh_rate_target_phase();
 	}
 
-	/* The four-bit sustain code is replicated into both nibbles because the envelope counter is eight bits wide. Sustain and release update independently of GATE, so a new sustain value can change the target of an envelope already in decay. */
+	/* The sustain/release register expands the four-bit sustain setting to the eight-bit envelope scale and independently selects the release rate. */
 	pub fn set_sustain_release(&mut self, value: u8) {
-		self.sustain_level = (value & 0xf0) | (value >> 4);
-		self.release_rate = value & 0x0f;
+		self.hold_level = (value & 0xf0) | (value >> 4);
+		self.fall_rate = value & 0x0f;
+		self.refresh_rate_target_phase();
 	}
 
-	/* GATE is sampled into the direction-control pipeline. The caller changes the pin level here; attack or release begins only when that sampled edge reaches the control stage. */
+	/* GATE changes the sampled input. Direction changes occur only after the sampled transition reaches the control path. */
 	pub fn set_gate(&mut self, gate: bool) {
-		self.gate = gate;
+		self.gate.input = gate;
 	}
 
 	#[inline]
-	/* The visible level is latched before gate sampling, direction control, level stepping, exponential division and rate-divider reset advance in hardware order. These paths therefore retain distinct one-cycle boundaries. */
+	/* One call advances one SID clock while preserving the internal ordering between readback, deferred divisor changes, GATE sampling, direction control, amplitude motion, exponential timing and the rate sequence. */
 	pub fn clock(&mut self) {
-		self.latched_level = self.volume;
-
-		if self.period_update != 0 {
-			self.exponential_period = self.period_update;
-			self.period_update = 0;
+		self.readback = self.volume;
+		/* Between sparse rate and GATE events the complete control pipeline is
+		 * quiescent.  In that overwhelmingly common state, advancing the exact
+		 * orbit coordinate is the only observable work required this PHI2. */
+		if self.queued_curve_divisor == 0
+			&& self.gate.input == self.gate.stage_a
+			&& self.gate.stage_a == self.gate.stage_b
+			&& self.gate.stage_b == self.gate.stage_c
+			&& self.motion_delay == 0
+			&& self.amplitude_delay == 0
+			&& self.curve_delay == 0
+			&& !self.matched_rate
+		{
+			if self.rate_phase == self.rate_target_phase {
+				self.matched_rate = true;
+			} else {
+				self.rate_phase += 1;
+				if self.rate_phase == 32_767 {
+					self.rate_phase = 0;
+				}
+			}
+			return;
 		}
-
-		self.sample_gate();
-		self.advance_direction_control();
-		self.advance_level_path();
-		self.advance_exponential_path();
-		self.service_rate_reset();
-		self.clock_rate_divider();
+		self.commit_curve_divisor();
+		self.sample_gate_transition();
+		self.commit_requested_motion();
+		self.clock_amplitude_path();
+		self.clock_curve_path();
+		self.consume_rate_match();
+		self.clock_rate_sequence();
 	}
 
 	#[inline]
-	/* GATE passes through three sampled stages. Rising and falling edges schedule direction changes rather than mutating the phase immediately. */
-	fn sample_gate(&mut self) {
-		let rising = !self.gate_d2 && self.gate_d1;
-		let falling = self.gate_d2 && !self.gate_d1;
-
-		self.gate_d2 = self.gate_d1;
-		self.gate_d1 = self.gate_d0;
-		self.gate_d0 = self.gate;
-
-		if rising {
-			self.direction_target = EnvelopePhase::Attack;
-			self.direction_progress = 2;
-		} else if falling {
-			self.direction_target = EnvelopePhase::Release;
-			self.direction_progress = if self.phase == EnvelopePhase::Attack { 2 } else { 1 };
+	fn commit_curve_divisor(&mut self) {
+		if self.queued_curve_divisor != 0 {
+			self.curve_divisor = self.queued_curve_divisor;
+			self.queued_curve_divisor = 0;
 		}
 	}
 
 	#[inline]
-	/* Direction changes are committed after the sampled GATE edge has crossed the pipeline. A new attack also clears the zero lock so an envelope held at zero can move again. */
-	fn advance_direction_control(&mut self) {
-		if self.direction_progress == 0 {
+	fn sample_gate_transition(&mut self) {
+		match self.gate.advance() {
+			Some(true) => {
+				self.requested_motion = EnvelopeMotion::Rising;
+				self.motion_delay = 2;
+			}
+			Some(false) => {
+				self.requested_motion = EnvelopeMotion::FallingToZero;
+				self.motion_delay = if self.motion == EnvelopeMotion::Rising {
+					2
+				} else {
+					1
+				};
+			}
+			None => {}
+		}
+	}
+
+	#[inline]
+	fn commit_requested_motion(&mut self) {
+		if self.motion_delay == 0 {
 			return;
 		}
 
-		self.direction_progress -= 1;
+		self.motion_delay -= 1;
 
-		if self.direction_target == EnvelopePhase::Attack && self.direction_progress == 1 {
-
+		if self.requested_motion == EnvelopeMotion::Rising && self.motion_delay == 1 {
+			self.refresh_rate_target_phase();
 			return;
 		}
 
-		if self.direction_progress == 0 {
-			self.phase = self.direction_target;
-			if self.phase == EnvelopePhase::Attack {
-				self.zero_lock = false;
-				self.exponential_count = 0;
+		if self.motion_delay == 0 {
+			self.motion = self.requested_motion;
+			if self.motion == EnvelopeMotion::Rising {
+				self.floor_hold = false;
+				self.curve_count = 0;
 			}
 		}
+		self.refresh_rate_target_phase();
 	}
 
 	#[inline]
-	/* A permitted level event changes the counter by exactly one. Attack wraps upward; decay and release move downward, and reaching zero engages the lock that produces the classic envelope hold until a later attack clears it. */
-	fn advance_level_path(&mut self) {
-		if self.level_wait == 0 {
+	fn clock_amplitude_path(&mut self) {
+		if self.amplitude_delay == 0 {
 			return;
 		}
 
-		self.level_wait -= 1;
-		if self.level_wait != 0 || self.zero_lock {
+		self.amplitude_delay -= 1;
+		if self.amplitude_delay != 0 || self.floor_hold {
 			return;
 		}
 
-		match self.phase {
-			EnvelopePhase::Attack => {
+		match self.motion {
+			EnvelopeMotion::Rising => {
 				self.volume = self.volume.wrapping_add(1);
 				if self.volume == 0xff {
-					self.direction_target = EnvelopePhase::DecaySustain;
-					self.direction_progress = 3;
+					self.requested_motion = EnvelopeMotion::FallingToSustain;
+					self.motion_delay = 3;
 				}
-				self.update_exponential_period();
+				self.select_curve_divisor();
 			}
-			EnvelopePhase::DecaySustain => {
-				if self.volume != self.sustain_level {
+			EnvelopeMotion::FallingToSustain => {
+				if self.volume != self.hold_level {
 					self.volume = self.volume.wrapping_sub(1);
 					if self.volume == 0 {
-						self.zero_lock = true;
+						self.floor_hold = true;
 					}
-					self.update_exponential_period();
+					self.select_curve_divisor();
 				}
 			}
-			EnvelopePhase::Release => {
+			EnvelopeMotion::FallingToZero => {
 				self.volume = self.volume.wrapping_sub(1);
 				if self.volume == 0 {
-					self.zero_lock = true;
+					self.floor_hold = true;
 				}
-				self.update_exponential_period();
+				self.select_curve_divisor();
 			}
 		}
 	}
 
 	#[inline]
-	/* Attack bypasses exponential division. Decay and release require a programmable number of rate events before the next level step, producing the characteristic segmented exponential slope. */
-	fn advance_exponential_path(&mut self) {
-		if self.exponential_wait == 0 {
+	fn clock_curve_path(&mut self) {
+		if self.curve_delay == 0 {
 			return;
 		}
 
-		self.exponential_wait -= 1;
-		if self.exponential_wait != 0 {
+		self.curve_delay -= 1;
+		if self.curve_delay != 0 {
 			return;
 		}
 
-		self.exponential_count = 0;
-		let should_step = match self.phase {
-			EnvelopePhase::Attack => false,
-			EnvelopePhase::DecaySustain => self.volume != self.sustain_level,
-			EnvelopePhase::Release => true,
+		self.curve_count = 0;
+		let amplitude_change_due = match self.motion {
+			EnvelopeMotion::Rising => false,
+			EnvelopeMotion::FallingToSustain => self.volume != self.hold_level,
+			EnvelopeMotion::FallingToZero => true,
 		};
-		if should_step {
-			self.level_wait = 1;
+
+		if amplitude_change_due {
+			self.amplitude_delay = 1;
 		}
 	}
 
 	#[inline]
-	/* The rate divider resets through a delayed arm rather than on the comparison cycle itself. Retaining this separation is necessary for rate-counter timing anomalies after parameter changes. */
-	fn service_rate_reset(&mut self) {
-		if !self.rate_reset_armed {
+	fn consume_rate_match(&mut self) {
+		if !self.matched_rate {
 			return;
 		}
 
-		self.rate_reset_armed = false;
-		self.rate_lfsr = 0x7fff;
+		self.matched_rate = false;
+		self.rate_phase = 0;
 
-		if self.phase == EnvelopePhase::Attack {
-			self.exponential_count = 0;
-			self.level_wait = 2;
-		} else if !self.zero_lock {
-			self.exponential_count = self.exponential_count.wrapping_add(1);
-			if self.exponential_count == self.exponential_period {
-				self.exponential_wait = if self.exponential_period == 1 { 1 } else { 2 };
+		if self.motion == EnvelopeMotion::Rising {
+			self.curve_count = 0;
+			self.amplitude_delay = 2;
+		} else if !self.floor_hold {
+			self.curve_count = self.curve_count.wrapping_add(1);
+			if self.curve_count == self.curve_divisor {
+				self.curve_delay = if self.curve_divisor == 1 { 1 } else { 2 };
 			}
 		}
 	}
 
 	#[inline]
-	/* The fifteen-bit LFSR is used as a deterministic divider. A comparator hit schedules both the exponential path and a later divider reset. */
-	fn clock_rate_divider(&mut self) {
-		let selected_period = self.current_rate_period();
-		if self.rate_lfsr == selected_period {
-			self.rate_reset_armed = true;
-			return;
+	fn clock_rate_sequence(&mut self) {
+		if self.rate_phase == self.rate_target_phase {
+			self.matched_rate = true;
+		} else {
+			self.rate_phase += 1;
+			if self.rate_phase == 32_767 {
+				self.rate_phase = 0;
+			}
 		}
-
-		let feedback = ((self.rate_lfsr << 14) ^ (self.rate_lfsr << 13)) & 0x4000;
-		self.rate_lfsr = (self.rate_lfsr >> 1) | feedback;
 	}
 
 	#[inline]
-	/* Attack, decay and release select different comparator periods from the programmed nibbles; sustain reuses the decay phase but suppresses level changes at the target value. */
-	fn current_rate_period(&self) -> u16 {
-		let rate = if self.direction_target == EnvelopePhase::Attack && self.direction_progress == 1 {
+	fn refresh_rate_target_phase(&mut self) {
+		let rate = if self.requested_motion == EnvelopeMotion::Rising && self.motion_delay == 1 {
 			self.decay_rate
 		} else {
-			match self.phase {
-				EnvelopePhase::Attack => self.attack_rate,
-				EnvelopePhase::DecaySustain => self.decay_rate,
-				EnvelopePhase::Release => self.release_rate,
+			match self.motion {
+				EnvelopeMotion::Rising => self.rise_rate,
+				EnvelopeMotion::FallingToSustain => self.decay_rate,
+				EnvelopeMotion::FallingToZero => self.fall_rate,
 			}
 		};
-		envelope_rate_comparator(rate)
+
+		self.rate_target_phase = (envelope_rate_period(rate) - 1) as u16;
 	}
 
 	#[inline]
-	/* The exponential period changes only at specific envelope levels; the new divisor is deferred to the next cycle so a threshold crossing cannot retroactively change the event that produced it. */
-	fn update_exponential_period(&mut self) {
-
-		self.period_update = match self.volume {
+	fn select_curve_divisor(&mut self) {
+		/* Five level detectors in the envelope counter select the exponential divider at the exact codes visible in the reconstructed 6581 logic. The last segment uses thirty rate events, not a binary divide-by-32 (SID-SCHEMATICS-ENVELOPE). */
+		self.queued_curve_divisor = match self.volume {
 			0xff | 0x00 => 1,
-			0x60 => 2,
-			0x30 => 4,
-			0x18 => 8,
-			0x0c => 16,
-			0x06 => 32,
+			0x5d => 2,
+			0x36 => 4,
+			0x1a => 8,
+			0x0e => 16,
+			0x06 => 30,
 			_ => 0,
 		};
 	}
 
 	#[inline]
 	pub const fn read_level(&self) -> u8 {
-		self.latched_level
+		self.readback
 	}
 }
 

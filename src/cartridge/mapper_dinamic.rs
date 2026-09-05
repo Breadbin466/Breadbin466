@@ -2,8 +2,8 @@
 // src/cartridge/mapper_dinamic.rs — Dinamic cartridge mapper
 // =======================================================
 
-use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 use super::bank_storage::BankStorage;
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 /* DinamicMapper selects ROML banks through reads in the IO1 window. The address, rather than the returned data, acts as the bank register input. */
 pub struct DinamicMapper {
@@ -27,11 +27,15 @@ impl CartridgeMapper for DinamicMapper {
 	}
 
 	fn read_roml(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.roml.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn peek_roml(&self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.roml.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_romh(&mut self, _offset: u16, _cycle: u64) -> Option<u8> {

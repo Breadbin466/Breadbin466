@@ -4,17 +4,25 @@
 
 use super::constants::{STORAGE_BANK_SIZE, STORAGE_MAX_ALLOWED_BANKS};
 
-#[derive(Clone)]/* BankStorage normalises sparse CRT chip packets into fixed 8 KiB banks. Empty slots remain distinguishable from programmed banks so unusual images can omit bank numbers without shifting every later bank. */
-pub struct BankStorage { banks: Vec<Option<Box<[u8; STORAGE_BANK_SIZE]>>> }
+#[derive(Clone)] /* BankStorage normalises sparse CRT chip packets into fixed 8 KiB banks. Empty slots remain distinguishable from programmed banks so unusual images can omit bank numbers without shifting every later bank. */
+pub struct BankStorage {
+	banks: Vec<Option<Box<[u8; STORAGE_BANK_SIZE]>>>,
+}
 
 impl BankStorage {
 	/* New storage starts sparse rather than allocating the maximum CRT bank space; banks appear only when a CHIP packet actually provides data. */
-	pub fn new() -> Self { Self { banks: Vec::new() } }
+	pub fn new() -> Self {
+		Self { banks: Vec::new() }
+	}
 
 	/* A CHIP packet may populate only the ROML or ROMH half represented by this storage bank. Copying at an explicit offset preserves partial packet placement and fills unspecified bytes with the erased value. */
 	pub fn store_bank(&mut self, index: usize, data: &[u8], offset: usize) {
-		if index >= STORAGE_MAX_ALLOWED_BANKS { return; }
-		while self.banks.len() <= index { self.banks.push(None); }
+		if index >= STORAGE_MAX_ALLOWED_BANKS {
+			return;
+		}
+		while self.banks.len() <= index {
+			self.banks.push(None);
+		}
 		let bank = self.banks[index].get_or_insert_with(|| Box::new([0xFF; STORAGE_BANK_SIZE]));
 		let len = data.len().min(STORAGE_BANK_SIZE - offset);
 		bank[offset..offset + len].copy_from_slice(&data[..len]);
@@ -56,9 +64,16 @@ impl BankStorage {
 			return None;
 		}
 		let ordinal = requested % populated;
-		self.banks.iter().enumerate().filter(|(_, bank)| bank.is_some()).nth(ordinal).map(|(index, _)| index)
+		self.banks
+			.iter()
+			.enumerate()
+			.filter(|(_, bank)| bank.is_some())
+			.nth(ordinal)
+			.map(|(index, _)| index)
 	}
 
 	/* Vector length reports the highest represented bank range, including deliberate holes used by sparse images. */
-	pub fn len(&self) -> usize { self.banks.len() }
+	pub fn len(&self) -> usize {
+		self.banks.len()
+	}
 }

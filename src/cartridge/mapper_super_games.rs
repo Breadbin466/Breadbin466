@@ -2,9 +2,9 @@
 // src/cartridge/mapper_super_games.rs — Super Games cartridge mapper
 // =======================================================
 
+use super::bank_storage::BankStorage;
 use super::crt_layout::add_bank_split;
 use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
-use super::bank_storage::BankStorage;
 
 /* SuperGamesMapper controls bank selection, cartridge mode and a permanent disable latch through IO2. Once disabled, the mapper releases the expansion-port lines until reset. */
 pub struct SuperGamesMapper {
@@ -39,19 +39,27 @@ impl CartridgeMapper for SuperGamesMapper {
 	}
 
 	fn read_roml(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.roml.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn peek_roml(&self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.roml.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_romh(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.romh.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.romh
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn peek_romh(&self, offset: u16, _cycle: u64) -> Option<u8> {
-		self.romh.get_resolved(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.romh
+			.get_resolved(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_io(&mut self, _addr: u16, _cycle: u64) -> Option<u8> {

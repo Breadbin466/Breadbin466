@@ -4,8 +4,9 @@
 
 use super::constants::{ACTION_REPLAY_2_DISABLE_THRESHOLD, ACTION_REPLAY_2_ENABLE_THRESHOLD};
 
-use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};use super::bus_configuration::{CartridgeMode, IoRead};
 use super::bank_storage::BankStorage;
+use super::bus_configuration::{CartridgeMode, IoRead};
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 /* The early Action Replay revisions share a mapper body but differ in bank selection, I/O decode and the capacitor-like enable/disable behaviour of revision II. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +35,9 @@ impl LegacyActionReplayMapper {
 	/* Construction records the exact hardware revision while keeping the common power-on bank and active mapping shared. */
 	pub fn new(kind: LegacyActionReplayKind) -> Self {
 		let bank = match kind {
-			LegacyActionReplayKind::ActionReplay2 | LegacyActionReplayKind::ActionReplay3 | LegacyActionReplayKind::ActionReplay4 => 1,
+			LegacyActionReplayKind::ActionReplay2
+			| LegacyActionReplayKind::ActionReplay3
+			| LegacyActionReplayKind::ActionReplay4 => 1,
 		};
 		Self {
 			kind,
@@ -60,12 +63,16 @@ impl LegacyActionReplayMapper {
 		match self.kind {
 			LegacyActionReplayKind::ActionReplay2 => self.bank & 1,
 			LegacyActionReplayKind::ActionReplay3 => (self.control & 1) as usize,
-			LegacyActionReplayKind::ActionReplay4 => ((self.control & 1) | ((self.control >> 3) & 2)) as usize,
+			LegacyActionReplayKind::ActionReplay4 => {
+				((self.control & 1) | ((self.control >> 3) & 2)) as usize
+			}
 		}
 	}
 
 	fn rom_byte(&self, offset: u16) -> Option<u8> {
-		self.rom.get_bank(self.selected_bank()).map(|data| data[(offset & 0x1fff) as usize])
+		self.rom
+			.get_bank(self.selected_bank())
+			.map(|data| data[(offset & 0x1fff) as usize])
 	}
 
 	fn ar2_charge(&mut self) {
@@ -133,7 +140,9 @@ impl CartridgeMapper for LegacyActionReplayMapper {
 				}
 				0xdf00..=0xdfff => {
 					self.ar2_charge();
-					self.rom.get_bank(1).map(|data| data[0x1f00 + (addr & 0xff) as usize])
+					self.rom
+						.get_bank(1)
+						.map(|data| data[0x1f00 + (addr & 0xff) as usize])
 				}
 				_ => None,
 			},
@@ -149,8 +158,14 @@ impl CartridgeMapper for LegacyActionReplayMapper {
 	/* The I/O read result carries an explicit drive mask because some legacy revisions expose only part of the data bus while the remaining bits retain the motherboard latch. */
 	fn read_io_bus(&mut self, addr: u16, cycle: u64) -> IoRead {
 		match self.kind {
-			LegacyActionReplayKind::ActionReplay3 | LegacyActionReplayKind::ActionReplay4 if (0xde00..=0xdeff).contains(&addr) => IoRead::OpenBus,
-			_ => self.read_io(addr, cycle).map_or(IoRead::NotDecoded, IoRead::Driven),
+			LegacyActionReplayKind::ActionReplay3 | LegacyActionReplayKind::ActionReplay4
+				if (0xde00..=0xdeff).contains(&addr) =>
+			{
+				IoRead::OpenBus
+			}
+			_ => self
+				.read_io(addr, cycle)
+				.map_or(IoRead::NotDecoded, IoRead::Driven),
 		}
 	}
 
@@ -158,7 +173,10 @@ impl CartridgeMapper for LegacyActionReplayMapper {
 		match self.kind {
 			LegacyActionReplayKind::ActionReplay2 => match addr {
 				0xde00..=0xdeff => Some(0),
-				0xdf00..=0xdfff => self.rom.get_bank(1).map(|data| data[0x1f00 + (addr & 0xff) as usize]),
+				0xdf00..=0xdfff => self
+					.rom
+					.get_bank(1)
+					.map(|data| data[0x1f00 + (addr & 0xff) as usize]),
 				_ => None,
 			},
 			LegacyActionReplayKind::ActionReplay3 => match addr {
@@ -192,7 +210,7 @@ impl CartridgeMapper for LegacyActionReplayMapper {
 						self.active = false;
 					}
 				}
-			},
+			}
 			LegacyActionReplayKind::ActionReplay4 => {
 				if (0xde00..=0xdeff).contains(&addr) && self.active {
 					self.control = value;
@@ -201,7 +219,7 @@ impl CartridgeMapper for LegacyActionReplayMapper {
 						self.active = false;
 					}
 				}
-			},
+			}
 		}
 	}
 

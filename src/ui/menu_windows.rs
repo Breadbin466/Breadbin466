@@ -2,23 +2,21 @@
 // src/ui/menu_windows.rs — Native Win32 menu backend
 // =======================================================
 
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-	AppendMenuW, CallWindowProcW, CreateMenu, CreatePopupMenu, DestroyMenu, DrawMenuBar, GetWindowLongPtrW,
-	SetMenu, SetWindowLongPtrW, HMENU, MF_CHECKED, MF_DISABLED, MF_ENABLED, MF_POPUP,
-	MF_SEPARATOR, MF_STRING, MF_UNCHECKED, GWLP_WNDPROC, WM_COMMAND, WNDPROC,
+	AppendMenuW, CallWindowProcW, CreateMenu, CreatePopupMenu, DestroyMenu, DrawMenuBar,
+	GWLP_WNDPROC, GetWindowLongPtrW, HMENU, MF_CHECKED, MF_DISABLED, MF_ENABLED, MF_POPUP,
+	MF_SEPARATOR, MF_STRING, MF_UNCHECKED, SetMenu, SetWindowLongPtrW, WM_COMMAND, WNDPROC,
 };
+use windows::core::PCWSTR;
 use winit::window::Window;
 
+use super::menu::{MenuEntry, MenuKey, MenuModel, MenuModifier, MenuShortcut, push_menu_event};
 use crate::emulator::Result;
-use super::menu::{push_menu_event, MenuEntry, MenuKey, MenuModel, MenuModifier, MenuShortcut};
 
 struct WindowHook {
 	previous: isize,
@@ -53,9 +51,9 @@ unsafe extern "system" fn menu_window_proc(
 	let procedure: WNDPROC = if previous == 0 {
 		None
 	} else {
-		Some(std::mem::transmute(previous))
+		Some(unsafe { std::mem::transmute(previous) })
 	};
-	CallWindowProcW(procedure, hwnd, message, wparam, lparam)
+	unsafe { CallWindowProcW(procedure, hwnd, message, wparam, lparam) }
 }
 
 /* PlatformMenu materialises the shared MenuModel as a Win32 HMENU and subclasses the window procedure so WM_COMMAND identifiers return to the platform-neutral event queue. */
@@ -67,24 +65,35 @@ pub struct PlatformMenu {
 
 impl PlatformMenu {
 	/* Construction binds the backend to one HWND, installs the command hook and builds the first native menu tree. */
-/* Win32 construction allocates native command identifiers for the shared model and records checkable entries for later refresh. */
+	/* Win32 construction allocates native command identifiers for the shared model and records checkable entries for later refresh. */
 	pub fn new(window: &Window, model: Arc<RwLock<MenuModel>>) -> Result<Self> {
 		let handle = window.window_handle()?;
 		let hwnd = match handle.as_raw() {
 			RawWindowHandle::Win32(handle) => HWND(handle.hwnd.get() as *mut _),
 			_ => return Err("The winit window does not expose a Win32 handle".into()),
 		};
-		let mut platform = Self { model, hwnd, menu: None };
+		let mut platform = Self {
+			model,
+			hwnd,
+			menu: None,
+		};
 		unsafe {
 			let previous = GetWindowLongPtrW(hwnd, GWLP_WNDPROC);
-			SetWindowLongPtrW(hwnd, GWLP_WNDPROC, menu_window_proc as *const () as usize as isize);
+			SetWindowLongPtrW(
+				hwnd,
+				GWLP_WNDPROC,
+				menu_window_proc as *const () as usize as isize,
+			);
 			WINDOWS
 				.get_or_init(|| Mutex::new(HashMap::new()))
 				.lock()
 				.map_err(|_| "Windows menu lock poisoned")?
 				.insert(
 					hwnd.0 as isize,
-					WindowHook { previous, commands: HashMap::new() },
+					WindowHook {
+						previous,
+						commands: HashMap::new(),
+					},
 				);
 		}
 		platform.refresh()?;
@@ -92,9 +101,13 @@ impl PlatformMenu {
 	}
 
 	/* Refresh replaces the complete HMENU, rebuilds the transient numeric-command map and destroys the previous native tree only after the replacement is installed. */
-/* Refresh rebuilds native labels and enabled states while preserving the logical identifiers used by command dispatch. */
+	/* Refresh rebuilds native labels and enabled states while preserving the logical identifiers used by command dispatch. */
 	pub fn refresh(&mut self) -> Result<()> {
-		let model = self.model.read().map_err(|_| "Menu model lock poisoned")?.clone();
+		let model = self
+			.model
+			.read()
+			.map_err(|_| "Menu model lock poisoned")?
+			.clone();
 		let mut next_command = 0x4000u16;
 		let mut commands = HashMap::new();
 		let root = unsafe {
@@ -134,32 +147,65 @@ unsafe fn append_entries(
 	next_command: &mut u16,
 	commands: &mut HashMap<u16, String>,
 ) -> Result<()> {
-	for entry in entries {
-		match entry {
-			MenuEntry::Separator => {
-				AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
-			}
-			MenuEntry::Submenu(section) => {
-				let popup = CreatePopupMenu()?;
-				append_entries(popup, &section.entries, next_command, commands)?;
-				append_popup(menu, popup, &section.label, section.enabled)?;
-			}
-			MenuEntry::Action { id, label, enabled, shortcut } => {
-				append_command(menu, id, label, *enabled, false, *shortcut, next_command, commands)?;
-			}
-			MenuEntry::Check { id, label, enabled, checked, shortcut } => {
-				append_command(menu, id, label, *enabled, *checked, *shortcut, next_command, commands)?;
+	unsafe {
+		for entry in entries {
+			match entry {
+				MenuEntry::Separator => {
+					AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+				}
+				MenuEntry::Submenu(section) => {
+					let popup = CreatePopupMenu()?;
+					append_entries(popup, &section.entries, next_command, commands)?;
+					append_popup(menu, popup, &section.label, section.enabled)?;
+				}
+				MenuEntry::Action {
+					id,
+					label,
+					enabled,
+					shortcut,
+				} => {
+					append_command(
+						menu,
+						id,
+						label,
+						*enabled,
+						false,
+						*shortcut,
+						next_command,
+						commands,
+					)?;
+				}
+				MenuEntry::Check {
+					id,
+					label,
+					enabled,
+					checked,
+					shortcut,
+				} => {
+					append_command(
+						menu,
+						id,
+						label,
+						*enabled,
+						*checked,
+						*shortcut,
+						next_command,
+						commands,
+					)?;
+				}
 			}
 		}
+		Ok(())
 	}
-	Ok(())
 }
 
 unsafe fn append_popup(menu: HMENU, popup: HMENU, label: &str, enabled: bool) -> Result<()> {
-	let wide = wide(label);
-	let flags = MF_POPUP | if enabled { MF_ENABLED } else { MF_DISABLED };
-	AppendMenuW(menu, flags, popup.0 as usize, PCWSTR(wide.as_ptr()))?;
-	Ok(())
+	unsafe {
+		let wide = wide(label);
+		let flags = MF_POPUP | if enabled { MF_ENABLED } else { MF_DISABLED };
+		AppendMenuW(menu, flags, popup.0 as usize, PCWSTR(wide.as_ptr()))?;
+		Ok(())
+	}
 }
 
 unsafe fn append_command(
@@ -172,20 +218,22 @@ unsafe fn append_command(
 	next_command: &mut u16,
 	commands: &mut HashMap<u16, String>,
 ) -> Result<()> {
-	if id.is_empty() {
-		let wide = wide(label);
-		AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, PCWSTR(wide.as_ptr()))?;
-		return Ok(());
+	unsafe {
+		if id.is_empty() {
+			let wide = wide(label);
+			AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, PCWSTR(wide.as_ptr()))?;
+			return Ok(());
+		}
+		let command = *next_command;
+		*next_command = next_command.wrapping_add(1);
+		commands.insert(command, id.to_string());
+		let mut flags = MF_STRING | if enabled { MF_ENABLED } else { MF_DISABLED };
+		flags |= if checked { MF_CHECKED } else { MF_UNCHECKED };
+		let display = shortcut_label(label, shortcut);
+		let wide = wide(&display);
+		AppendMenuW(menu, flags, command as usize, PCWSTR(wide.as_ptr()))?;
+		Ok(())
 	}
-	let command = *next_command;
-	*next_command = next_command.wrapping_add(1);
-	commands.insert(command, id.to_string());
-	let mut flags = MF_STRING | if enabled { MF_ENABLED } else { MF_DISABLED };
-	flags |= if checked { MF_CHECKED } else { MF_UNCHECKED };
-	let display = shortcut_label(label, shortcut);
-	let wide = wide(&display);
-	AppendMenuW(menu, flags, command as usize, PCWSTR(wide.as_ptr()))?;
-	Ok(())
 }
 
 fn wide(value: &str) -> Vec<u16> {

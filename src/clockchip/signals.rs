@@ -10,5 +10,7 @@ pub enum LineLevel {
 }
 
 impl LineLevel {
-	pub fn is_active(self) -> bool { self == LineLevel::Low }
+	pub fn is_active(self) -> bool {
+		self == LineLevel::Low
+	}
 }

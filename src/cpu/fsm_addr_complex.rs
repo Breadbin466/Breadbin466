@@ -4,13 +4,17 @@
 
 use super::Cpu;
 use crate::cpu::bus::SystemBus;
-use crate::cpu::decoder::{OpcodeInfo, AddressingMode};
+use crate::cpu::decoder::{AddressingMode, OpcodeInfo};
 
 /* Indexed addressing preserves the NMOS processor's provisional addresses and correction cycles instead of collapsing them into a single effective-address calculation. */
 impl Cpu {
 	/* Zero-page indexing performs a discarded read from the unindexed address, then wraps the addition within page zero. */
 	pub fn execute_zp_indexed<B: SystemBus>(&mut self, bus: &mut B, info: &OpcodeInfo) {
-		let index = if info.mode == AddressingMode::ZeroPageX { self.x } else { self.y };
+		let index = if info.mode == AddressingMode::ZeroPageX {
+			self.x
+		} else {
+			self.y
+		};
 		match self.t_state {
 			1 => {
 				self.addr_lo = self.read_byte(bus, self.pc, false);
@@ -42,13 +46,17 @@ impl Cpu {
 				crate::cpu::op_rmw::rmw_phase_modify_write(self, bus, self.ir);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
 	/* Reads can finish without a correction cycle when the index stays on the same page. Stores and read-modify-write operations always expose the provisional address cycle. */
 	pub fn execute_abs_indexed<B: SystemBus>(&mut self, bus: &mut B, info: &OpcodeInfo) {
-		let index = if info.mode == AddressingMode::AbsoluteX { self.x } else { self.y };
+		let index = if info.mode == AddressingMode::AbsoluteX {
+			self.x
+		} else {
+			self.y
+		};
 		match self.t_state {
 			1 => {
 				self.addr_lo = self.read_byte(bus, self.pc, false);
@@ -97,7 +105,7 @@ impl Cpu {
 				crate::cpu::op_rmw::rmw_phase_modify_write(self, bus, self.ir);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -129,7 +137,7 @@ impl Cpu {
 				self.pc = u16::from_le_bytes([self.addr_lo, self.addr_hi]);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -151,7 +159,8 @@ impl Cpu {
 				self.t_state += 1;
 			}
 			4 => {
-				self.addr_hi = self.read_byte(bus, (self.pointer as u8).wrapping_add(1) as u16, false);
+				self.addr_hi =
+					self.read_byte(bus, (self.pointer as u8).wrapping_add(1) as u16, false);
 				self.addr_abs = u16::from_le_bytes([self.addr_lo, self.addr_hi]);
 				self.t_state += 1;
 			}
@@ -176,7 +185,7 @@ impl Cpu {
 				crate::cpu::op_rmw::rmw_phase_modify_write(self, bus, self.ir);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -238,7 +247,7 @@ impl Cpu {
 				crate::cpu::op_rmw::rmw_phase_modify_write(self, bus, self.ir);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 }

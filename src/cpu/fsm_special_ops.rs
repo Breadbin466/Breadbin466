@@ -7,7 +7,6 @@ use crate::cpu::bus::SystemBus;
 
 /* Control-flow instructions have dedicated cycle machines because their stack accesses and discarded reads do not fit ordinary addressing modes. */
 impl Cpu {
-
 	/* JSR fetches the target low byte, performs a stack-page read, pushes the return address high then low, and only then fetches the target high byte. */
 	pub fn execute_jsr<B: SystemBus>(&mut self, bus: &mut B) {
 		match self.t_state {
@@ -33,7 +32,7 @@ impl Cpu {
 				self.pc = u16::from_le_bytes([self.addr_lo, self.addr_hi]);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -64,7 +63,7 @@ impl Cpu {
 				self.pc = self.pc.wrapping_add(1);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -83,7 +82,7 @@ impl Cpu {
 				self.pc = target;
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -115,7 +114,7 @@ impl Cpu {
 				self.pc = u16::from_le_bytes([self.addr_lo, self.addr_hi]);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -160,7 +159,7 @@ impl Cpu {
 				self.brk_shadow = true;
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 }

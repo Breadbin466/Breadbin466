@@ -3,18 +3,15 @@
 // =======================================================
 
 use super::Cpu;
-use super::{C_FLAG, Z_FLAG, V_FLAG, N_FLAG, D_FLAG};
+use super::{C_FLAG, D_FLAG, N_FLAG, V_FLAG, Z_FLAG};
 
 /* Flag updates follow NMOS 6502 rules. Decimal ADC and SBC derive N, Z and V from the processor's intermediate binary/BCD behaviour rather than treating BCD as a post-processing format (MOS-6500-PROGRAMMING-1976, decimal arithmetic). */
 impl Cpu {
-
 	#[inline(always)]
 	/* N and Z are replaced together from the supplied result while every unrelated status bit is preserved. */
 	pub fn update_nz(&mut self, value: u8) {
 		let is_zero = (value == 0) as u8;
-		self.p = (self.p & !(Z_FLAG | N_FLAG))
-			| (is_zero << 1)
-			| (value & N_FLAG);
+		self.p = (self.p & !(Z_FLAG | N_FLAG)) | (is_zero << 1) | (value & N_FLAG);
 	}
 
 	/* Decimal ADC corrects each packed-decimal digit while overflow still reflects signed binary addition. */
@@ -26,7 +23,9 @@ impl Cpu {
 		if (self.p & D_FLAG) != 0 {
 			/* Add the low decimal digit first. Values ten through fifteen are invalid packed-BCD digits, so adding six converts the binary nibble sum into the decimal result and exposes a carry into the high digit. */
 			let mut tmp = (a & 0x0f) as u32 + (m & 0x0f) as u32 + c;
-			if tmp > 9 { tmp += 6; }
+			if tmp > 9 {
+				tmp += 6;
+			}
 			tmp = if tmp <= 0x0f {
 				(tmp & 0x0f) + (a & 0xf0) as u32 + (m & 0xf0) as u32
 			} else {
@@ -35,23 +34,39 @@ impl Cpu {
 			/* NMOS Z and V are derived from the uncorrected binary sum, while N follows the intermediate decimal-adjusted high digit. */
 			let bin = (a as u32) + (m as u32) + c;
 			self.p &= !(Z_FLAG | N_FLAG | V_FLAG | C_FLAG);
-			if (bin & 0xff) == 0 { self.p |= Z_FLAG; }
-			if (tmp & 0x80) != 0 { self.p |= N_FLAG; }
+			if (bin & 0xff) == 0 {
+				self.p |= Z_FLAG;
+			}
+			if (tmp & 0x80) != 0 {
+				self.p |= N_FLAG;
+			}
 			if ((a as u32 ^ bin) & 0x80 != 0) && ((a as u32 ^ m as u32) & 0x80 == 0) {
 				self.p |= V_FLAG;
 			}
 			/* A high digit above nine receives the corresponding +6 correction. Carry is set when the corrected packed-decimal result exceeds two digits. */
-			if (tmp & 0x1f0) > 0x90 { tmp += 0x60; }
-			if (tmp & 0xff0) > 0xf0 { self.p |= C_FLAG; }
+			if (tmp & 0x1f0) > 0x90 {
+				tmp += 0x60;
+			}
+			if (tmp & 0xff0) > 0xf0 {
+				self.p |= C_FLAG;
+			}
 			self.a = tmp as u8;
 		} else {
 			let tmp = (a as u32) + (m as u32) + c;
 			self.p &= !(Z_FLAG | N_FLAG | V_FLAG | C_FLAG);
 			let r = (tmp & 0xff) as u8;
-			if r == 0 { self.p |= Z_FLAG; }
-			if (r & 0x80) != 0 { self.p |= N_FLAG; }
-			if ((a ^ m) & 0x80 == 0) && ((a ^ r) & 0x80 != 0) { self.p |= V_FLAG; }
-			if tmp > 0xff { self.p |= C_FLAG; }
+			if r == 0 {
+				self.p |= Z_FLAG;
+			}
+			if (r & 0x80) != 0 {
+				self.p |= N_FLAG;
+			}
+			if ((a ^ m) & 0x80 == 0) && ((a ^ r) & 0x80 != 0) {
+				self.p |= V_FLAG;
+			}
+			if tmp > 0xff {
+				self.p |= C_FLAG;
+			}
 			self.a = r;
 		}
 	}
@@ -65,23 +80,36 @@ impl Cpu {
 
 		self.p &= !(Z_FLAG | N_FLAG | V_FLAG | C_FLAG);
 		let r = (tmp & 0xff) as u8;
-		if r == 0 { self.p |= Z_FLAG; }
-		if (r & 0x80) != 0 { self.p |= N_FLAG; }
-		if ((a ^ r) & 0x80 != 0) && ((a ^ src) & 0x80 != 0) { self.p |= V_FLAG; }
-		if tmp < 0x100 { self.p |= C_FLAG; }
+		if r == 0 {
+			self.p |= Z_FLAG;
+		}
+		if (r & 0x80) != 0 {
+			self.p |= N_FLAG;
+		}
+		if ((a ^ r) & 0x80 != 0) && ((a ^ src) & 0x80 != 0) {
+			self.p |= V_FLAG;
+		}
+		if tmp < 0x100 {
+			self.p |= C_FLAG;
+		}
 
 		if (self.p & D_FLAG) != 0 {
 			/* Subtract the low decimal digit first. A borrow out of the nibble is detected through bit 4 of the wrapping result; subtracting six converts the invalid binary digit back into packed BCD and propagates the borrow into the high digit. */
-			let mut tmp_a: u32 = (a as u32 & 0xf).wrapping_sub(src as u32 & 0xf).wrapping_sub(c_in);
+			let mut tmp_a: u32 = (a as u32 & 0xf)
+				.wrapping_sub(src as u32 & 0xf)
+				.wrapping_sub(c_in);
 			if tmp_a & 0x10 != 0 {
 				tmp_a = ((tmp_a.wrapping_sub(6)) & 0xf)
-					| (a as u32 & 0xf0).wrapping_sub(src as u32 & 0xf0).wrapping_sub(0x10);
+					| (a as u32 & 0xf0)
+						.wrapping_sub(src as u32 & 0xf0)
+						.wrapping_sub(0x10);
 			} else {
-				tmp_a = (tmp_a & 0xf)
-					| (a as u32 & 0xf0).wrapping_sub(src as u32 & 0xf0);
+				tmp_a = (tmp_a & 0xf) | (a as u32 & 0xf0).wrapping_sub(src as u32 & 0xf0);
 			}
 			/* A borrow from the high decimal digit requires the matching -6 correction in the upper nibble. Flags above were intentionally taken from the uncorrected binary subtraction, matching NMOS behaviour. */
-			if tmp_a & 0x100 != 0 { tmp_a = tmp_a.wrapping_sub(0x60); }
+			if tmp_a & 0x100 != 0 {
+				tmp_a = tmp_a.wrapping_sub(0x60);
+			}
 			self.a = tmp_a as u8;
 		} else {
 			self.a = r;
@@ -105,9 +133,7 @@ impl Cpu {
 	pub fn alu_bit(&mut self, value: u8) {
 		let intersected = self.a & value;
 		let is_zero = (intersected == 0) as u8;
-		self.p = (self.p & !(Z_FLAG | 0xc0))
-			| (is_zero << 1)
-			| (value & 0xc0);
+		self.p = (self.p & !(Z_FLAG | 0xc0)) | (is_zero << 1) | (value & 0xc0);
 	}
 
 	#[inline(always)]
@@ -185,9 +211,15 @@ impl Cpu {
 			tmp2 |= if carry_in { 0x100 } else { 0 };
 			tmp2 >>= 1;
 			self.p &= !(N_FLAG | Z_FLAG | V_FLAG | C_FLAG);
-			if carry_in { self.p |= N_FLAG; }
-			if (tmp2 & 0xff) == 0 { self.p |= Z_FLAG; }
-			if (tmp2 as u8 ^ tmp) & 0x40 != 0 { self.p |= V_FLAG; }
+			if carry_in {
+				self.p |= N_FLAG;
+			}
+			if (tmp2 & 0xff) == 0 {
+				self.p |= Z_FLAG;
+			}
+			if (tmp2 as u8 ^ tmp) & 0x40 != 0 {
+				self.p |= V_FLAG;
+			}
 			/* The low digit threshold uses the original bit 0 as the rotate contribution; crossing five requires the +6 packed-decimal correction. */
 			if (tmp & 0x0f) as u32 + (tmp & 0x01) as u32 > 0x05 {
 				tmp2 = (tmp2 & 0xf0) | ((tmp2 + 0x06) & 0x0f);
@@ -205,8 +237,12 @@ impl Cpu {
 			self.p &= !(N_FLAG | Z_FLAG | V_FLAG | C_FLAG);
 			let r = tmp as u8;
 			self.update_nz(r);
-			if (tmp & 0x40) != 0 { self.p |= C_FLAG; }
-			if ((tmp & 0x40) ^ ((tmp & 0x20) << 1)) != 0 { self.p |= V_FLAG; }
+			if (tmp & 0x40) != 0 {
+				self.p |= C_FLAG;
+			}
+			if ((tmp & 0x40) ^ ((tmp & 0x20) << 1)) != 0 {
+				self.p |= V_FLAG;
+			}
 			self.a = r;
 		}
 	}

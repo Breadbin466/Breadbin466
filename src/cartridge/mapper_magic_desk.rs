@@ -2,8 +2,8 @@
 // src/cartridge/mapper_magic_desk.rs — Magic Desk cartridge mapper
 // =======================================================
 
-use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 use super::bank_storage::BankStorage;
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 /* MagicDeskMapper combines a bank number with a cartridge-disable bit in its IO1 register. Disabling releases GAME and EXROM so the underlying C64 map returns without detaching the image. */
 pub struct MagicDeskMapper {
@@ -37,14 +37,18 @@ impl CartridgeMapper for MagicDeskMapper {
 		if self.off {
 			return None;
 		}
-		self.roml.get_bank(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_bank(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn peek_roml(&self, offset: u16, _cycle: u64) -> Option<u8> {
 		if self.off {
 			return None;
 		}
-		self.roml.get_bank(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_bank(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_romh(&mut self, _offset: u16, _cycle: u64) -> Option<u8> {

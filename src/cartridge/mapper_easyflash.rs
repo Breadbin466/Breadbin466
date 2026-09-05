@@ -2,8 +2,8 @@
 // src/cartridge/mapper_easyflash.rs — Unified EasyFlash emulation
 // =======================================================
 
-use super::mapper_interface::{CartridgeMapper, LineState, CartridgeInfo, MapperType};
 use super::bank_storage::BankStorage;
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /* FlashState follows the command parser of an individual programmable ROM chip. Unlock cycles, program setup, erase setup and busy status are kept explicit because ordinary ROM reads can advance or report those operations. */
@@ -252,7 +252,11 @@ impl CartridgeMapper for EasyFlashMapper {
 			}
 		}
 		let b = self.get_absolute_bank();
-		let real_byte = self.roml.get_bank(b).map(|bank| bank[(offset & 0x1FFF) as usize]).unwrap_or(0xFF);
+		let real_byte = self
+			.roml
+			.get_bank(b)
+			.map(|bank| bank[(offset & 0x1FFF) as usize])
+			.unwrap_or(0xFF);
 		Some(self.flash_lo.read_status(cycle, real_byte))
 	}
 
@@ -265,7 +269,12 @@ impl CartridgeMapper for EasyFlashMapper {
 			};
 		}
 		let bank = self.get_absolute_bank();
-		Some(self.roml.get_bank(bank).map(|data| data[(offset & 0x1FFF) as usize]).unwrap_or(0xFF))
+		Some(
+			self.roml
+				.get_bank(bank)
+				.map(|data| data[(offset & 0x1FFF) as usize])
+				.unwrap_or(0xFF),
+		)
 	}
 
 	fn read_romh(&mut self, offset: u16, cycle: u64) -> Option<u8> {
@@ -277,7 +286,11 @@ impl CartridgeMapper for EasyFlashMapper {
 			}
 		}
 		let b = self.get_absolute_bank();
-		let real_byte = self.romh.get_bank(b).map(|bank| bank[(offset & 0x1FFF) as usize]).unwrap_or(0xFF);
+		let real_byte = self
+			.romh
+			.get_bank(b)
+			.map(|bank| bank[(offset & 0x1FFF) as usize])
+			.unwrap_or(0xFF);
 		Some(self.flash_hi.read_status(cycle, real_byte))
 	}
 
@@ -290,7 +303,12 @@ impl CartridgeMapper for EasyFlashMapper {
 			};
 		}
 		let bank = self.get_absolute_bank();
-		Some(self.romh.get_bank(bank).map(|data| data[(offset & 0x1FFF) as usize]).unwrap_or(0xFF))
+		Some(
+			self.romh
+				.get_bank(bank)
+				.map(|data| data[(offset & 0x1FFF) as usize])
+				.unwrap_or(0xFF),
+		)
 	}
 
 	fn peek_io(&self, addr: u16, _cycle: u64) -> Option<u8> {
@@ -317,7 +335,13 @@ impl CartridgeMapper for EasyFlashMapper {
 		}
 		match addr {
 			0xDE00 => Some(self.bank as u8),
-			0xDE01 => if self.is_ef3 { Some(self.active_slot as u8) } else { None },
+			0xDE01 => {
+				if self.is_ef3 {
+					Some(self.active_slot as u8)
+				} else {
+					None
+				}
+			}
 			0xDE02 => Some(self.control_reg),
 			_ => None,
 		}
@@ -441,7 +465,11 @@ impl CartridgeMapper for EasyFlashMapper {
 
 	fn get_info(&self) -> CartridgeInfo {
 		CartridgeInfo {
-			name: if self.is_ef3 { "EasyFlash 3".to_string() } else { "EasyFlash".to_string() },
+			name: if self.is_ef3 {
+				"EasyFlash 3".to_string()
+			} else {
+				"EasyFlash".to_string()
+			},
 			mapper_type: self.mapper_type,
 			rom_size: (self.roml.len() + self.romh.len()) * 8192,
 			bank_count: self.get_max_bank(),

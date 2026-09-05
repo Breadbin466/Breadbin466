@@ -2,7 +2,7 @@
 // src/ui/about.rs — About dialog façade and shared content
 // =======================================================
 
-pub use crate::ui::constants::{APP_NAME, VERSION, COPYRIGHT, DESCRIPTION_PARAGRAPHS};
+pub use crate::ui::constants::{APP_NAME, COPYRIGHT, DESCRIPTION_PARAGRAPHS, VERSION};
 use winit::window::Window;
 
 /* The shared About façade owns product text and error policy, while each platform backend presents that same content through its native dialog conventions. */

@@ -2,15 +2,16 @@
 // src/cartridge/cartridge_device.rs — Cartridge manager and lifecycle control
 // =======================================================
 
-use std::path::{Path, PathBuf};
 use std::fs::File;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::mapper_interface::{CartridgeMapper, LineState, MapperType};
 use super::bus_configuration::{CartridgeConfiguration, IoRead};
 use super::constants::CRT_MAGIC;
-use super::crt_loader::CrtImage;use super::mapper_creation::create_mapper;
+use super::crt_loader::CrtImage;
+use super::mapper_creation::create_mapper;
+use super::mapper_interface::{CartridgeMapper, LineState, MapperType};
 
 static NVRAM_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -128,7 +129,8 @@ impl Cartridge {
 		self.game = lines.game;
 		self.exrom = lines.exrom;
 		self.nmi_low = lines.nmi_low;
-		self.configuration = CartridgeConfiguration::from_lines(self.game, self.exrom, self.nmi_low);
+		self.configuration =
+			CartridgeConfiguration::from_lines(self.game, self.exrom, self.nmi_low);
 		self.sync_configuration(0);
 	}
 
@@ -137,10 +139,11 @@ impl Cartridge {
 		self.current_crt_path.as_deref()
 	}
 
-	/* Detaching persists mapper-owned non-volatile storage before replacing the complete device with the electrically disconnected state. */
-	pub fn detach(&mut self) {
-		self.save_associated_nvram();
+	/* Detaching persists mapper-owned non-volatile storage before replacing the complete device with the electrically disconnected state. A failed host write leaves the cartridge mounted. */
+	pub fn detach(&mut self) -> std::io::Result<()> {
+		self.save_associated_nvram()?;
 		*self = Self::new();
+		Ok(())
 	}
 
 	#[inline(always)]
@@ -212,17 +215,29 @@ impl Cartridge {
 	 */
 	#[inline(always)]
 	pub fn debug_peek_roml(&self, addr: u16, cycle: u64) -> Option<u8> {
-		if self.present { self.mapper.peek_roml(addr, cycle) } else { None }
+		if self.present {
+			self.mapper.peek_roml(addr, cycle)
+		} else {
+			None
+		}
 	}
 
 	#[inline(always)]
 	pub fn debug_peek_romh(&self, addr: u16, cycle: u64) -> Option<u8> {
-		if self.present { self.mapper.peek_romh(addr, cycle) } else { None }
+		if self.present {
+			self.mapper.peek_romh(addr, cycle)
+		} else {
+			None
+		}
 	}
 
 	#[inline(always)]
 	pub fn debug_peek_io(&self, addr: u16, cycle: u64) -> Option<u8> {
-		if self.present { self.mapper.peek_io(addr, cycle) } else { None }
+		if self.present {
+			self.mapper.peek_io(addr, cycle)
+		} else {
+			None
+		}
 	}
 
 	#[inline(always)]
@@ -302,21 +317,26 @@ impl Cartridge {
 
 	/* Mounting loads and validates the replacement image before committing it, then records reset lines and associated NVRAM only after mapper construction succeeds. */
 	pub fn mount(&mut self, path: &Path) -> crate::emulator::Result<()> {
-		if !path.is_file() { return Err("File not found".into()); }
+		if !path.is_file() {
+			return Err("File not found".into());
+		}
 		let mut data = Vec::new();
 		std::io::BufReader::new(File::open(path)?).read_to_end(&mut data)?;
 
 		let mut replacement = Self::new();
 		replacement.current_crt_path = Some(path.to_path_buf());
 		let is_crt = replacement.dispatch_load(&data)?;
-		if is_crt { replacement.load_associated_nvram(); }
+		if is_crt {
+			replacement.load_associated_nvram();
+		}
 		replacement.present = true;
-		replacement.requires_cycle_tick = matches!(replacement.mapper_type, MapperType::EpyxFastLoad);
+		replacement.requires_cycle_tick =
+			matches!(replacement.mapper_type, MapperType::EpyxFastLoad);
 		replacement.sync_configuration(0);
 		replacement.capture_reset_lines();
 		replacement.lines_changed = false;
 
-		self.save_associated_nvram();
+		self.save_associated_nvram()?;
 		*self = replacement;
 		Ok(())
 	}
@@ -335,7 +355,9 @@ impl Cartridge {
 		} else {
 			let (l, h) = data.split_at(0x2000);
 			self.mapper.add_bank(0, 0x8000, l);
-			if !h.is_empty() { self.mapper.add_bank(0, 0xA000, h); }
+			if !h.is_empty() {
+				self.mapper.add_bank(0, 0xA000, h);
+			}
 			self.game = false;
 			self.exrom = false;
 		}
@@ -351,7 +373,8 @@ impl Cartridge {
 		self.game = image.game;
 		self.exrom = image.exrom;
 		for chip in image.chips {
-			self.mapper.add_chip(chip.chip_type, chip.bank, chip.address, chip.data);
+			self.mapper
+				.add_chip(chip.chip_type, chip.bank, chip.address, chip.data);
 		}
 		Ok(())
 	}
@@ -363,16 +386,22 @@ impl Cartridge {
 			if nvram_path.exists() {
 				if let Ok(mut f) = File::open(nvram_path) {
 					let mut buf = Vec::new();
-					if f.read_to_end(&mut buf).is_ok() { self.mapper.load_nvram(&buf); }
+					if f.read_to_end(&mut buf).is_ok() {
+						self.mapper.load_nvram(&buf);
+					}
 				}
 			}
 		}
 	}
 
 	/* Mapper-owned persistent bytes are written only when a cartridge supplies them, avoiding empty sidecars for ordinary ROM cartridges. */
-	pub fn save_associated_nvram(&self) {
-		let Some(path) = self.current_crt_path.as_ref() else { return; };
-		let Some(bytes) = self.mapper.save_nvram() else { return; };
+	pub fn save_associated_nvram(&self) -> std::io::Result<()> {
+		let Some(path) = self.current_crt_path.as_ref() else {
+			return Ok(());
+		};
+		let Some(bytes) = self.mapper.save_nvram() else {
+			return Ok(());
+		};
 		let nvram_path = path.with_extension("sav");
 		let counter = NVRAM_COUNTER.fetch_add(1, Ordering::Relaxed);
 		let temporary = nvram_path.with_extension(format!("sav.{}.tmp", counter));
@@ -402,5 +431,6 @@ impl Cartridge {
 		if result.is_err() {
 			let _ = std::fs::remove_file(temporary);
 		}
+		result
 	}
 }

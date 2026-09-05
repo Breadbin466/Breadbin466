@@ -1,6 +1,8 @@
 // =======================================================
-// src/sid/sid.rs — MOS 6581R4AR core
+// src/sid/sid.rs — SID chip core
 // =======================================================
+
+/* Cycle-level MOS 6581 core and register interface. */
 
 use super::bus::InternalDataBus;
 use super::constants::REGISTER_MASK;
@@ -49,8 +51,12 @@ impl Mos6581 {
 
 	/* Reset clears the digital control state and the filter history without recreating the precomputed waveform, DAC and filter tables. */
 	pub fn reset(&mut self) {
-		for oscillator in &mut self.oscillators { oscillator.reset(); }
-		for envelope in &mut self.envelopes { envelope.reset(); }
+		for oscillator in &mut self.oscillators {
+			oscillator.reset();
+		}
+		for envelope in &mut self.envelopes {
+			envelope.reset();
+		}
 		self.filter.reset();
 		self.data_bus.reset();
 		self.last_sample = 0;
@@ -84,9 +90,15 @@ impl Mos6581 {
 			let sync_2 = oscillator_2.sync_enabled;
 
 			/* A synchronised oscillator resets when its modulator raises accumulator bit 23. The guard suppresses the reset in the mutual-sync corner where the modulator is itself being synchronised in the same ring step. */
-			if rising_0 && sync_1 && !(sync_0 && rising_2) { oscillator_1.synchronise(); }
-			if rising_1 && sync_2 && !(sync_1 && rising_0) { oscillator_2.synchronise(); }
-			if rising_2 && sync_0 && !(sync_2 && rising_1) { oscillator_0.synchronise(); }
+			if rising_0 && sync_1 && !(sync_0 && rising_2) {
+				oscillator_1.synchronise();
+			}
+			if rising_1 && sync_2 && !(sync_1 && rising_0) {
+				oscillator_2.synchronise();
+			}
+			if rising_2 && sync_0 && !(sync_2 && rising_1) {
+				oscillator_0.synchronise();
+			}
 			return None;
 		}
 
@@ -110,26 +122,46 @@ impl Mos6581 {
 		let sync_1 = oscillator_1.sync_enabled;
 		let sync_2 = oscillator_2.sync_enabled;
 
-		if rising_0 && sync_1 && !(sync_0 && rising_2) { oscillator_1.synchronise(); }
-		if rising_1 && sync_2 && !(sync_1 && rising_0) { oscillator_2.synchronise(); }
-		if rising_2 && sync_0 && !(sync_2 && rising_1) { oscillator_0.synchronise(); }
+		if rising_0 && sync_1 && !(sync_0 && rising_2) {
+			oscillator_1.synchronise();
+		}
+		if rising_1 && sync_2 && !(sync_1 && rising_0) {
+			oscillator_2.synchronise();
+		}
+		if rising_2 && sync_0 && !(sync_2 && rising_1) {
+			oscillator_0.synchronise();
+		}
 
 		let level_0 = envelope_0.volume;
 		let level_1 = envelope_1.volume;
 		let level_2 = envelope_2.volume;
 		let voice_0 = self.voice_converter.output(
-			waveform_0, level_0, oscillator_0.output_is_frozen());
+			waveform_0,
+			level_0,
+			oscillator_0.output_is_frozen(),
+			oscillator_0.waveform,
+		);
 		let voice_1 = self.voice_converter.output(
-			waveform_1, level_1, oscillator_1.output_is_frozen());
+			waveform_1,
+			level_1,
+			oscillator_1.output_is_frozen(),
+			oscillator_1.waveform,
+		);
 		let voice_2 = self.voice_converter.output(
-			waveform_2, level_2, oscillator_2.output_is_frozen());
+			waveform_2,
+			level_2,
+			oscillator_2.output_is_frozen(),
+			oscillator_2.waveform,
+		);
 
 		self.last_sample = self.filter.clock([voice_0, voice_1, voice_2]);
 		Some(self.last_sample)
 	}
 
 	/* Feeds the EXT IN pin into the same routing and filter topology as the three internal voices. EXT IN is sampled into the filter path independently of register writes and is consumed on subsequent SID clocks. */
-	pub fn input(&mut self, sample: i16) { self.filter.set_external_input(sample); }
+	pub fn input(&mut self, sample: i16) {
+		self.filter.set_external_input(sample);
+	}
 
 	/* Every write drives the SID data bus before the addressed register consumes the value. The register file repeats every 32 bytes, matching the five decoded address lines (C64-PRG-1982, 6581 register map). */
 	#[inline]
@@ -168,6 +200,12 @@ impl Mos6581 {
 	#[inline(always)]
 	/* A voice control write reaches oscillator and envelope in the same bus transaction because TEST, SYNC, RING, waveform selection and GATE share one physical register. */
 	fn write_voice_control(&mut self, voice: usize, value: u8) {
+		if value & 0xf1 == 0x41 {
+			self.filter.mark_pure_pulse_gate_rise();
+		}
+		if value & 0xf1 == 0x21 {
+			self.filter.mark_pure_saw_gate_rise(voice);
+		}
 		self.oscillators[voice].write_control(value);
 		self.envelopes[voice].set_gate(value & 0x01 != 0);
 	}
@@ -191,5 +229,7 @@ impl Mos6581 {
 }
 
 impl Default for Mos6581 {
-	fn default() -> Self { Self::new() }
+	fn default() -> Self {
+		Self::new()
+	}
 }

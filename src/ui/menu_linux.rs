@@ -8,9 +8,9 @@ use std::sync::{Arc, RwLock};
 use gtk::prelude::*;
 use winit::window::Window;
 
-use crate::emulator::Result;
-use super::menu::{push_menu_event, MenuEntry, MenuKey, MenuModel, MenuModifier, MenuShortcut};
+use super::menu::{MenuEntry, MenuKey, MenuModel, MenuModifier, MenuShortcut, push_menu_event};
 use super::shell_linux::Shell;
+use crate::emulator::Result;
 
 /* PlatformMenu materialises the shared MenuModel as GTK widgets. It retains check-item handles for incremental state changes while full structural changes rebuild the native menu bar. */
 pub struct PlatformMenu {
@@ -20,7 +20,7 @@ pub struct PlatformMenu {
 
 impl PlatformMenu {
 	/* Construction stores the shared model and performs the first complete GTK materialisation. */
-/* GTK construction materialises the platform-neutral menu model, registers accelerators and retains check items for later state updates. */
+	/* GTK construction materialises the platform-neutral menu model, registers accelerators and retains check items for later state updates. */
 	pub fn new(_window: &Window, model: Arc<RwLock<MenuModel>>) -> Result<Self> {
 		let mut platform = Self {
 			model,
@@ -33,7 +33,11 @@ impl PlatformMenu {
 	/* Refresh rebuilds the GTK tree from an immutable model snapshot and replaces the shell menu bar atomically from the UI thread. */
 	pub fn refresh(&mut self) -> Result<()> {
 		self.checks.clear();
-		let model = self.model.read().map_err(|_| "Menu model lock poisoned")?.clone();
+		let model = self
+			.model
+			.read()
+			.map_err(|_| "Menu model lock poisoned")?
+			.clone();
 		let menu_bar = gtk::MenuBar::new();
 		let accel_group = gtk::AccelGroup::new();
 		for section in &model.sections {
@@ -61,8 +65,13 @@ impl PlatformMenu {
 		}
 	}
 
-/* Recursive materialisation preserves model hierarchy while leaf activation forwards only stable command identifiers. */
-	fn append_entries(&mut self, menu: &gtk::Menu, entries: &[MenuEntry], accel_group: &gtk::AccelGroup) {
+	/* Recursive materialisation preserves model hierarchy while leaf activation forwards only stable command identifiers. */
+	fn append_entries(
+		&mut self,
+		menu: &gtk::Menu,
+		entries: &[MenuEntry],
+		accel_group: &gtk::AccelGroup,
+	) {
 		for entry in entries {
 			match entry {
 				MenuEntry::Separator => {
@@ -76,7 +85,12 @@ impl PlatformMenu {
 					item.set_submenu(Some(&submenu));
 					menu.append(&item);
 				}
-				MenuEntry::Action { id, label, enabled, shortcut } => {
+				MenuEntry::Action {
+					id,
+					label,
+					enabled,
+					shortcut,
+				} => {
 					let item = gtk::MenuItem::with_label(label);
 					item.set_sensitive(*enabled && !id.is_empty());
 					if !id.is_empty() {
@@ -86,7 +100,13 @@ impl PlatformMenu {
 					}
 					menu.append(&item);
 				}
-				MenuEntry::Check { id, label, enabled, checked, shortcut } => {
+				MenuEntry::Check {
+					id,
+					label,
+					enabled,
+					checked,
+					shortcut,
+				} => {
 					let item = gtk::CheckMenuItem::with_label(label);
 					item.set_active(*checked);
 					item.set_sensitive(*enabled && !id.is_empty());
@@ -103,7 +123,11 @@ impl PlatformMenu {
 	}
 }
 
-fn add_accelerator<W: IsA<gtk::Widget>>(item: &W, shortcut: Option<MenuShortcut>, group: &gtk::AccelGroup) {
+fn add_accelerator<W: IsA<gtk::Widget>>(
+	item: &W,
+	shortcut: Option<MenuShortcut>,
+	group: &gtk::AccelGroup,
+) {
 	let Some(shortcut) = shortcut else {
 		return;
 	};

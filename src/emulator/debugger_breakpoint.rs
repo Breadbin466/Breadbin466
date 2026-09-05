@@ -1,3 +1,7 @@
+// =======================================================
+// src/emulator/debugger_breakpoint.rs — Debugger breakpoint and watchpoint matching
+// =======================================================
+
 /*
  * Breadbin466 interactive debugger: breakpoint and watchpoint matching.
  *
@@ -13,7 +17,11 @@
  * bus cycle, when the transferred value is known and all hardware side effects
  * have already occurred. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AccessKind { Execute, Read, Write }
+pub enum AccessKind {
+	Execute,
+	Read,
+	Write,
+}
 
 /* An inclusive address interval represents both a single-address breakpoint
  * and a range watchpoint.  value is optional because execution breakpoints and
@@ -34,7 +42,12 @@ impl Breakpoint {
 	 * policy.  The caller decides when an access is observable; this method only
 	 * applies the stored kind, inclusive range and optional byte filter. */
 	pub fn matches(&self, kind: AccessKind, addr: u16, value: Option<u8>) -> bool {
-		self.enabled && self.kind == kind && (self.start..=self.end).contains(&addr)
-			&& self.value.map(|expected| value == Some(expected)).unwrap_or(true)
+		self.enabled
+			&& self.kind == kind
+			&& (self.start..=self.end).contains(&addr)
+			&& self
+				.value
+				.map(|expected| value == Some(expected))
+				.unwrap_or(true)
 	}
 }

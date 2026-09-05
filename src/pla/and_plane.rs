@@ -51,110 +51,183 @@ pub fn evaluate_and_plane(i: PlaInputSignals) -> ProductTerms {
 	let cas_asserted = !i.cas_n;
 
 	ProductTerms {
-		p0: i.loram && i.hiram
-			&& i.a15 && !i.a14 && i.a13
-			&& cpu_bus && read && i.game_n,
+		p0: i.loram && i.hiram && i.a15 && !i.a14 && i.a13 && cpu_bus && read && i.game_n,
 
-		p1: i.hiram
-			&& i.a15 && i.a14 && i.a13
-			&& cpu_bus && read && i.game_n,
+		p1: i.hiram && i.a15 && i.a14 && i.a13 && cpu_bus && read && i.game_n,
 
 		p2: i.hiram
-			&& i.a15 && i.a14 && i.a13
-			&& cpu_bus && read && exrom_asserted && game_asserted,
+			&& i.a15
+			&& i.a14
+			&& i.a13
+			&& cpu_bus
+			&& read
+			&& exrom_asserted
+			&& game_asserted,
 
-		p3: i.hiram && !i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && read && i.game_n,
+		p3: i.hiram
+			&& !i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& read
+			&& i.game_n,
 
-		p4: i.loram && !i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && read && i.game_n,
+		p4: i.loram
+			&& !i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& read
+			&& i.game_n,
 
-		p5: i.hiram && !i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && read && exrom_asserted && game_asserted,
+		p5: i.hiram
+			&& !i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& read
+			&& exrom_asserted
+			&& game_asserted,
 
-		p6: i.va14_n && !i.va13 && i.va12
-			&& vic_bus && i.game_n,
+		p6: i.va14_n && !i.va13 && i.va12 && vic_bus && i.game_n,
 
-		p7: i.va14_n && !i.va13 && i.va12
-			&& vic_bus && exrom_asserted && game_asserted,
+		p7: i.va14_n && !i.va13 && i.va12 && vic_bus && exrom_asserted && game_asserted,
 
-		p9: i.hiram && i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && i.ba && read && i.game_n,
+		p9: i.hiram
+			&& i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& i.ba
+			&& read
+			&& i.game_n,
 
-		p10: i.hiram && i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && write && i.game_n,
+		p10: i.hiram
+			&& i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& write
+			&& i.game_n,
 
-		p11: i.loram && i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && i.ba && read && i.game_n,
+		p11: i.loram
+			&& i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& i.ba
+			&& read
+			&& i.game_n,
 
-		p12: i.loram && i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && write && i.game_n,
+		p12: i.loram
+			&& i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& write
+			&& i.game_n,
 
-		p13: i.hiram && i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && i.ba && read && exrom_asserted && game_asserted,
+		p13: i.hiram
+			&& i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& i.ba
+			&& read
+			&& exrom_asserted
+			&& game_asserted,
 
-		p14: i.hiram && i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && write && exrom_asserted && game_asserted,
+		p14: i.hiram
+			&& i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& write
+			&& exrom_asserted
+			&& game_asserted,
 
-		p15: i.loram && i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && i.ba && read && exrom_asserted && game_asserted,
+		p15: i.loram
+			&& i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& i.ba
+			&& read
+			&& exrom_asserted
+			&& game_asserted,
 
-		p16: i.loram && i.charen
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && write && exrom_asserted && game_asserted,
+		p16: i.loram
+			&& i.charen
+			&& i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& write
+			&& exrom_asserted
+			&& game_asserted,
 
-		p17: i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && i.ba && read && i.exrom_n && game_asserted,
+		p17: i.a15
+			&& i.a14
+			&& !i.a13
+			&& i.a12
+			&& cpu_bus
+			&& i.ba
+			&& read
+			&& i.exrom_n
+			&& game_asserted,
 
-		p18: i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && write && i.exrom_n && game_asserted,
+		p18: i.a15 && i.a14 && !i.a13 && i.a12 && cpu_bus && write && i.exrom_n && game_asserted,
 
-		p19: i.loram && i.hiram
-			&& i.a15 && !i.a14 && !i.a13
-			&& cpu_bus && read && exrom_asserted,
+		p19: i.loram && i.hiram && i.a15 && !i.a14 && !i.a13 && cpu_bus && read && exrom_asserted,
 
-		p20: i.a15 && !i.a14 && !i.a13
-			&& cpu_bus && i.exrom_n && game_asserted,
+		p20: i.a15 && !i.a14 && !i.a13 && cpu_bus && i.exrom_n && game_asserted,
 
 		p21: i.hiram
-			&& i.a15 && !i.a14 && i.a13
-			&& cpu_bus && read && exrom_asserted && game_asserted,
+			&& i.a15
+			&& !i.a14
+			&& i.a13
+			&& cpu_bus
+			&& read
+			&& exrom_asserted
+			&& game_asserted,
 
-		p22: i.a15 && i.a14 && i.a13
-			&& cpu_bus && i.exrom_n && game_asserted,
+		p22: i.a15 && i.a14 && i.a13 && cpu_bus && i.exrom_n && game_asserted,
 
-		p23: i.va13 && i.va12
-			&& vic_bus && i.exrom_n && game_asserted,
+		p23: i.va13 && i.va12 && vic_bus && i.exrom_n && game_asserted,
 
-		p24: !i.a15 && !i.a14 && i.a12
-			&& i.exrom_n && game_asserted,
+		p24: !i.a15 && !i.a14 && i.a12 && i.exrom_n && game_asserted,
 
-		p25: !i.a15 && !i.a14 && i.a13
-			&& i.exrom_n && game_asserted,
+		p25: !i.a15 && !i.a14 && i.a13 && i.exrom_n && game_asserted,
 
-		p26: !i.a15 && i.a14
-			&& i.exrom_n && game_asserted,
+		p26: !i.a15 && i.a14 && i.exrom_n && game_asserted,
 
-		p27: i.a15 && !i.a14 && i.a13
-			&& i.exrom_n && game_asserted,
+		p27: i.a15 && !i.a14 && i.a13 && i.exrom_n && game_asserted,
 
-		p28: i.a15 && i.a14 && !i.a13 && !i.a12
-			&& i.exrom_n && game_asserted,
+		p28: i.a15 && i.a14 && !i.a13 && !i.a12 && i.exrom_n && game_asserted,
 
 		p30: cas_asserted,
 
-		p31: i.cas_n
-			&& i.a15 && i.a14 && !i.a13 && i.a12
-			&& cpu_bus && write,
+		p31: i.cas_n && i.a15 && i.a14 && !i.a13 && i.a12 && cpu_bus && write,
 	}
 }

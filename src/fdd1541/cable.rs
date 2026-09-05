@@ -4,7 +4,7 @@
 
 use super::constants::{DRIVE_RING_CAPACITY, DRIVE_RING_MASK};
 use std::hint::spin_loop;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 /* The producer and consumer counters occupy separate cache lines so the host and drive threads do not invalidate each other while exchanging IEC events. */
 #[repr(align(128))]
@@ -36,17 +36,21 @@ impl EventRing {
 		}
 	}
 
-	/* A full ring applies back-pressure instead of dropping an electrical transition, because losing one IEC edge can alter the drive protocol. */
+	/* A full ring applies back-pressure instead of dropping an electrical transition. Shutdown alone may interrupt that wait because no later emulated cycle will consume the pending transition. */
 	#[inline(always)]
-	pub(super) fn push(&self, cycle: u64, state: u32) {
+	pub(super) fn push(&self, cycle: u64, state: u32, stopping: &AtomicBool) -> bool {
 		let head = self.head.0.load(Ordering::Relaxed);
 		while head.wrapping_sub(self.tail.0.load(Ordering::Acquire)) >= DRIVE_RING_CAPACITY as u64 {
+			if stopping.load(Ordering::Acquire) {
+				return false;
+			}
 			spin_loop();
 		}
 		let slot = (head & DRIVE_RING_MASK) as usize;
 		self.cycles[slot].store(cycle, Ordering::Relaxed);
 		self.states[slot].store(state, Ordering::Relaxed);
 		self.head.0.store(head.wrapping_add(1), Ordering::Release);
+		true
 	}
 
 	#[inline(always)]
@@ -87,6 +91,7 @@ pub(super) struct IecCable {
 	pub(super) host_cycle: PaddedU64,
 	pub(super) drive_cycle: PaddedU64,
 	pub(super) device_events: EventRing,
+	pub(super) stopping: AtomicBool,
 }
 
 impl IecCable {
@@ -95,6 +100,7 @@ impl IecCable {
 			host_cycle: PaddedU64(AtomicU64::new(0)),
 			drive_cycle: PaddedU64(AtomicU64::new(0)),
 			device_events: EventRing::new(),
+			stopping: AtomicBool::new(false),
 		}
 	}
 }

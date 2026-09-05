@@ -2,9 +2,9 @@
 // src/cartridge/mapper_atomic_power.rs — Atomic Power (Nordic Power) mapper
 // =======================================================
 
-use super::mapper_interface::{CartridgeMapper, LineState, MapperType, CartridgeInfo};
-use super::bus_configuration::{CartridgeMode, IoRead};
 use super::bank_storage::BankStorage;
+use super::bus_configuration::{CartridgeMode, IoRead};
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 /* AtomicPowerMapper is a freezer cartridge with banked ROM, RAM overlays, mode bits and phase-dependent mapping. IO reads may expose open or partially driven bus values as well as stored data. */
 pub struct AtomicPowerMapper {
@@ -85,7 +85,9 @@ impl CartridgeMapper for AtomicPowerMapper {
 		if self.export_ram {
 			return Some(self.ram[(offset & 0x1FFF) as usize]);
 		}
-		self.roml.get_bank(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.roml
+			.get_bank(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_romh(&mut self, offset: u16, _cycle: u64) -> Option<u8> {
@@ -96,7 +98,9 @@ impl CartridgeMapper for AtomicPowerMapper {
 		if self.export_ram_at_a000 {
 			return Some(self.ram[(offset & 0x1FFF) as usize]);
 		}
-		self.romh.get_bank(self.bank).map(|data| data[(offset & 0x1FFF) as usize])
+		self.romh
+			.get_bank(self.bank)
+			.map(|data| data[(offset & 0x1FFF) as usize])
 	}
 
 	fn read_io(&mut self, addr: u16, _cycle: u64) -> Option<u8> {
@@ -146,7 +150,10 @@ impl CartridgeMapper for AtomicPowerMapper {
 			}
 			self.phi1 = CartridgeMode::Ram;
 			self.phi2 = mode;
-		} else if (0xDF00..=0xDFFF).contains(&addr) && self.active && (self.export_ram || self.export_ram_at_a000) {
+		} else if (0xDF00..=0xDFFF).contains(&addr)
+			&& self.active
+			&& (self.export_ram || self.export_ram_at_a000)
+		{
 			self.ram[0x1F00 + (addr & 0xFF) as usize] = value;
 		}
 	}
@@ -167,7 +174,10 @@ impl CartridgeMapper for AtomicPowerMapper {
 	}
 
 	fn phase_modes(&self, lines: LineState) -> (CartridgeMode, CartridgeMode) {
-		(self.phi1, CartridgeMode::from_lines(lines.game, lines.exrom))
+		(
+			self.phi1,
+			CartridgeMode::from_lines(lines.game, lines.exrom),
+		)
 	}
 
 	fn add_bank(&mut self, bank: usize, _addr: u16, data: &[u8]) {
@@ -183,16 +193,22 @@ impl CartridgeMapper for AtomicPowerMapper {
 		}
 	}
 
-	fn get_max_bank(&self) -> usize { self.roml.len() }
+	fn get_max_bank(&self) -> usize {
+		self.roml.len()
+	}
 
-	fn get_debug_bank(&self) -> usize { self.bank }
+	fn get_debug_bank(&self) -> usize {
+		self.bank
+	}
 
 	fn load_nvram(&mut self, data: &[u8]) {
 		let count = data.len().min(self.ram.len());
 		self.ram[..count].copy_from_slice(&data[..count]);
 	}
 
-	fn save_nvram(&self) -> Option<Vec<u8>> { Some(self.ram.to_vec()) }
+	fn save_nvram(&self) -> Option<Vec<u8>> {
+		Some(self.ram.to_vec())
+	}
 
 	fn get_info(&self) -> CartridgeInfo {
 		CartridgeInfo {

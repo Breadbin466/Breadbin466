@@ -1,13 +1,20 @@
 // =======================================================
-// src/ui/audio.rs — Audio host using the native device format and burst-tolerant buffering
+// src/ui/audio.rs — Low-latency audio host using the native device format
 // =======================================================
 
-use crate::ui::constants::{AUDIO_SAMPLE_RATE, BUFFER_CAPACITY, BUFFER_MASK};
+use crate::emulator::Result;
+#[cfg(not(target_os = "windows"))]
+use crate::ui::constants::AUDIO_SAMPLE_RATE;
+use crate::ui::constants::{BUFFER_CAPACITY, BUFFER_MASK};
+#[cfg(not(target_os = "windows"))]
+use cpal::SupportedStreamConfig;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SizedSample, SupportedStreamConfig};
+#[cfg(target_os = "linux")]
+use cpal::{BufferSize, SupportedBufferSize};
+use cpal::{FromSample, SizedSample};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
-use crate::emulator::Result;
+use std::time::{Duration, Instant};
 
 /* SpscRing is the lock-free boundary between the emulation thread and the real-time audio callback. The producer publishes complete sample slots with Release ordering; the callback observes them with Acquire ordering and never blocks or allocates. */
 struct SpscRing {
@@ -49,7 +56,8 @@ impl SpscRing {
 		}
 
 		if accepted != 0 {
-			self.tail.store(tail.wrapping_add(accepted as u16), Ordering::Release);
+			self.tail
+				.store(tail.wrapping_add(accepted as u16), Ordering::Release);
 		}
 		if dropped != 0 {
 			self.overruns.fetch_add(dropped as u64, Ordering::Relaxed);
@@ -89,63 +97,98 @@ pub struct AudioHost {
 }
 
 impl AudioHost {
-	/* Stream selection fixes the emulated output rate at 44.1 kHz, then chooses the closest native format and channel count supported by the default device. */
+	/* Stream selection follows the host contract: Core Audio and Linux prefer the project rate when available, while WASAPI uses the endpoint mix format required by shared mode. */
 	pub fn new() -> Result<Self> {
 		let host = cpal::default_host();
-		let device = host.default_output_device()
+		let device = host
+			.default_output_device()
 			.ok_or("No default audio output device found")?;
 
 		let default_config = device.default_output_config()?;
-		let preferred_format = default_config.sample_format();
-		let preferred_channels = default_config.channels();
 
-		let mut candidates: Vec<SupportedStreamConfig> = device
-			.supported_output_configs()?
-			.filter(|range| {
-				range.min_sample_rate() <= AUDIO_SAMPLE_RATE
-					&& range.max_sample_rate() >= AUDIO_SAMPLE_RATE
-			})
-			.map(|range| range.with_sample_rate(AUDIO_SAMPLE_RATE))
-			.collect();
+		/* WASAPI shared mode is defined by the Windows mix format. Requesting 44.1 kHz
+		 * merely because the endpoint advertises it can create a stream that opens yet
+		 * never reaches the active shared engine. Using the exact default format lets
+		 * Windows own any device conversion, while the SID resampler follows the selected
+		 * native rate through AudioHost::get_sample_rate(). */
+		#[cfg(target_os = "windows")]
+		let final_config = default_config.clone();
 
-		candidates.sort_by_key(|config| {
-			let format_penalty = u8::from(config.sample_format() != preferred_format);
-			let channel_penalty = config.channels().abs_diff(preferred_channels);
-			(format_penalty, channel_penalty)
-		});
+		#[cfg(not(target_os = "windows"))]
+		let final_config = {
+			let preferred_format = default_config.sample_format();
+			let preferred_channels = default_config.channels();
 
-		let final_config = candidates
-			.into_iter()
-			.next()
-			.ok_or("The default audio output device does not support 44,100 Hz")?;
+			let mut candidates: Vec<SupportedStreamConfig> = device
+				.supported_output_configs()?
+				.filter(|range| {
+					range.min_sample_rate() <= AUDIO_SAMPLE_RATE
+						&& range.max_sample_rate() >= AUDIO_SAMPLE_RATE
+				})
+				.map(|range| range.with_sample_rate(AUDIO_SAMPLE_RATE))
+				.collect();
+
+			candidates.sort_by_key(|config| {
+				let format_penalty = u8::from(config.sample_format() != preferred_format);
+				let channel_penalty = config.channels().abs_diff(preferred_channels);
+				(format_penalty, channel_penalty)
+			});
+
+			candidates
+				.into_iter()
+				.next()
+				.ok_or("The default audio output device does not support 44,100 Hz")?
+		};
 
 		let sample_format = final_config.sample_format();
+		#[cfg(target_os = "linux")]
+		let supported_buffer_size = final_config.buffer_size().clone();
+		#[cfg(target_os = "linux")]
+		let mut stream_config = final_config.config();
+		#[cfg(not(target_os = "linux"))]
 		let stream_config = final_config.config();
+		/* Linux requests a modest fixed period rather than the former 2,048-frame safety
+		 * buffer. At 44.1 kHz, 512 frames represent about 11.6 ms: enough to absorb ordinary
+		 * scheduler jitter without making keyboard, video and SID output feel disconnected.
+		 * The backend default remains the fallback when its period range is unavailable. */
+		#[cfg(target_os = "linux")]
+		{
+			stream_config.buffer_size = match supported_buffer_size {
+				SupportedBufferSize::Range { min, max } => {
+					BufferSize::Fixed(512u32.clamp(min, max))
+				}
+				SupportedBufferSize::Unknown => BufferSize::Default,
+			};
+		}
 		let sample_rate = stream_config.sample_rate;
 		let channels = stream_config.channels as usize;
 
 		println!(
 			"[AUDIO] Stream Format: {} Hz, {} channels, {}",
-			sample_rate,
-			channels,
-			sample_format,
+			sample_rate, channels, sample_format,
 		);
 
 		let ring = Arc::new(SpscRing::new());
 		let stream = match sample_format {
 			cpal::SampleFormat::I8 => build_output_stream::<i8>(&device, stream_config, &ring)?,
 			cpal::SampleFormat::I16 => build_output_stream::<i16>(&device, stream_config, &ring)?,
-			cpal::SampleFormat::I24 => build_output_stream::<cpal::I24>(&device, stream_config, &ring)?,
+			cpal::SampleFormat::I24 => {
+				build_output_stream::<cpal::I24>(&device, stream_config, &ring)?
+			}
 			cpal::SampleFormat::I32 => build_output_stream::<i32>(&device, stream_config, &ring)?,
 			cpal::SampleFormat::I64 => build_output_stream::<i64>(&device, stream_config, &ring)?,
 			cpal::SampleFormat::U8 => build_output_stream::<u8>(&device, stream_config, &ring)?,
 			cpal::SampleFormat::U16 => build_output_stream::<u16>(&device, stream_config, &ring)?,
-			cpal::SampleFormat::U24 => build_output_stream::<cpal::U24>(&device, stream_config, &ring)?,
+			cpal::SampleFormat::U24 => {
+				build_output_stream::<cpal::U24>(&device, stream_config, &ring)?
+			}
 			cpal::SampleFormat::U32 => build_output_stream::<u32>(&device, stream_config, &ring)?,
 			cpal::SampleFormat::U64 => build_output_stream::<u64>(&device, stream_config, &ring)?,
 			cpal::SampleFormat::F32 => build_output_stream::<f32>(&device, stream_config, &ring)?,
 			cpal::SampleFormat::F64 => build_output_stream::<f64>(&device, stream_config, &ring)?,
-			format => return Err(format!("Unsupported native audio sample format: {}", format).into()),
+			format => {
+				return Err(format!("Unsupported native audio sample format: {}", format).into());
+			}
 		};
 
 		stream.play()?;
@@ -178,6 +221,7 @@ where
 	let channels = config.channels as usize;
 	let ring = Arc::clone(ring);
 	let mut last_sample = 0.0f32;
+	let mut last_error_report = Instant::now() - Duration::from_secs(5);
 	let stream = device.build_output_stream(
 		config,
 		move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
@@ -188,7 +232,15 @@ where
 				}
 			}
 		},
-		|error| eprintln!("[AUDIO] Stream error: {}", error),
+		move |error| {
+			/* Backends can report the same xrun repeatedly while recovering. Rate limiting
+			 * keeps a temporary host-side fault visible without flooding the terminal or
+			 * making recovery itself more expensive. */
+			if last_error_report.elapsed() >= Duration::from_secs(5) {
+				eprintln!("[AUDIO] Stream error: {}", error);
+				last_error_report = Instant::now();
+			}
+		},
 		None,
 	)?;
 	Ok(stream)

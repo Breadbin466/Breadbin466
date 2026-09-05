@@ -64,7 +64,6 @@ impl CpuPort {
 			if (low_pins & (1 << i)) != 0 {
 				self.last_pull_down[i] = current_cycle;
 			} else if (high_pins & (1 << i)) != 0 {
-
 				self.last_pull_down[i] = NEVER_PULLED_DOWN;
 			}
 		}
@@ -92,7 +91,14 @@ impl CpuPort {
 		match addr {
 			0x0000 => self.ddr,
 			0x0001 => {
-				let mut pins = 0xFF;
+				/*
+				The 6510 exposes P0-P5 only, so unconnected input bits 6 and 7 read low. The 8502 exposes an additional P6 line and therefore keeps bit 6 as a live input while bit 7 remains unused. A plain 6502 never reaches this integrated-port path because $0000/$0001 are forwarded to the system bus (CBM-HACKERS-6510-PORT-2000).
+				*/
+				let mut pins = match model {
+					CpuModel::Mos6502 => 0xFF,
+					CpuModel::Mos6510 => 0x3F,
+					CpuModel::Mos8502 => 0x7F,
+				};
 
 				if !self.cassette_sense {
 					pins &= !0x10;
@@ -118,7 +124,7 @@ impl CpuPort {
 				} else {
 					(self.latch_write & self.ddr) | (pins & input_mask)
 				}
-			},
+			}
 			_ => 0xFF,
 		}
 	}

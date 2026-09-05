@@ -7,7 +7,6 @@ use crate::cpu::bus::SystemBus;
 
 /* Stack instructions retain their discarded opcode-stream and stack-page reads so peripheral-visible timing matches the NMOS bus sequence. */
 impl Cpu {
-
 	pub fn execute_pha<B: SystemBus>(&mut self, bus: &mut B) {
 		match self.t_state {
 			1 => {
@@ -18,7 +17,7 @@ impl Cpu {
 				self.push_byte(bus, self.a);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -34,7 +33,7 @@ impl Cpu {
 				self.push_byte(bus, val);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -55,7 +54,7 @@ impl Cpu {
 				self.update_nz(self.a);
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 
@@ -81,7 +80,7 @@ impl Cpu {
 				self.p = (flags & !super::B_FLAG) | super::U_FLAG;
 				self.t_state = 0;
 			}
-			_ => self.t_state = 0
+			_ => self.t_state = 0,
 		}
 	}
 }

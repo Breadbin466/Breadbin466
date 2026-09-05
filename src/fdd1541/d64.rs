@@ -40,15 +40,19 @@ pub(crate) fn create_formatted() -> Vec<u8> {
 	let mut bam_entry = D64_BAM_OFFSET + 4;
 	for track in 1..=35u8 {
 		let sector_count = gcr::sectors_per_track(track);
+		let (mut bitmap0, bitmap1, bitmap2) = build_bam_bitmap(sector_count);
 		if track == 18 {
-			disk[bam_entry..bam_entry + 4].fill(0);
+			/* Track 18 is not wholly reserved. The BAM sector (18/0) and first
+			 * directory sector (18/1) are allocated; sectors 2 through 18 remain
+			 * available for further directory blocks. */
+			bitmap0 &= !0x03;
+			disk[bam_entry] = sector_count - 2;
 		} else {
-			let (bitmap0, bitmap1, bitmap2) = build_bam_bitmap(sector_count);
 			disk[bam_entry] = sector_count;
-			disk[bam_entry + 1] = bitmap0;
-			disk[bam_entry + 2] = bitmap1;
-			disk[bam_entry + 3] = bitmap2;
 		}
+		disk[bam_entry + 1] = bitmap0;
+		disk[bam_entry + 2] = bitmap1;
+		disk[bam_entry + 3] = bitmap2;
 		bam_entry += 4;
 	}
 

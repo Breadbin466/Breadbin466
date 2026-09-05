@@ -2,9 +2,13 @@
 // src/fdd1541/read_channel.rs — Magnetic read/write channel and bit-cell clock
 // =======================================================
 
+use super::constants::NOMINAL_TRACK_BYTES;
+use super::disk_drive::DiskMechanism;
+use super::media::{DiskFormat, TrackSpeed};
+
 impl DiskMechanism {
 	#[inline(always)]
-	fn read_track_bit(&mut self, track_index: usize) -> bool {
+	pub(super) fn read_track_bit(&mut self, track_index: usize) -> bool {
 		let track_length = self.tracks[track_index].len();
 		if track_length == 0 {
 			return false;
@@ -16,7 +20,7 @@ impl DiskMechanism {
 		let bit = (self.tracks[track_index][self.byte_pos] >> (7 - self.bit_pos)) & 1;
 		bit != 0
 	}
-	fn initialise_empty_g64_track(&mut self, track_index: usize, density: u8) -> bool {
+	pub(super) fn initialise_empty_g64_track(&mut self, track_index: usize, density: u8) -> bool {
 		if self.format != Some(DiskFormat::G64) || track_index >= self.tracks.len() {
 			return false;
 		}
@@ -75,7 +79,7 @@ impl DiskMechanism {
 		self.write_pending = true;
 	}
 	#[inline(always)]
-	fn restart_bit_cell_clock(&mut self, density: u8) {
+	pub(super) fn restart_bit_cell_clock(&mut self, density: u8) {
 		self.bit_cell_divider = density & 0x03;
 		self.decoder_phase = 0;
 	}
@@ -120,7 +124,7 @@ impl DiskMechanism {
 	}
 	#[inline(always)]
 	/* A bit-cell clock first samples or writes the circular track, then advances sync and byte assembly state from that physical bit. */
-	fn clock_bit_cell(
+	pub(super) fn clock_bit_cell(
 		&mut self,
 		track_index: usize,
 		density: u8,
@@ -136,7 +140,7 @@ impl DiskMechanism {
 	}
 	#[inline(always)]
 	/* Large elapsed spans are decomposed into individual cells so sync marks and byte-ready pulses cannot be skipped. */
-	fn clock_bit_cell_span(
+	pub(super) fn clock_bit_cell_span(
 		&mut self,
 		track_index: usize,
 		density: u8,
@@ -155,5 +159,4 @@ impl DiskMechanism {
 			self.advance_bit_cell_phase(track_index, density, write_mode, write_byte);
 		}
 	}
-
 }

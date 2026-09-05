@@ -2,9 +2,13 @@
 // src/datassette/constants.rs — Datassette subsystem constants
 // =======================================================
 
-/* TAP images start with a fixed 12-byte signature and a 16-byte header. Version 1 encodes long pulse intervals as a zero marker followed by a 24-bit little-endian cycle count. */
+/* TAP images use a 20-byte header. Version 0 represents a zero pulse as the legacy long-pulse marker, while version 1 follows the marker with an exact 24-bit little-endian cycle count (TAP-FORMAT-SCHEPERS). */
 pub(crate) const TAP_SIGNATURE: &[u8; 12] = b"C64-TAPE-RAW";
-pub(crate) const TAP_HEADER_SIZE: usize = 16;
+pub(crate) const TAP_HEADER_SIZE: usize = 20;
+pub(crate) const TAP_VERSION_OFFSET: usize = 12;
+pub(crate) const TAP_DATA_SIZE_OFFSET: usize = 16;
+pub(crate) const TAP_VERSION_0: u8 = 0;
+pub(crate) const TAP_VERSION_1: u8 = 1;
 pub(crate) const TAP_EXTENDED_PULSE_SIZE: usize = 3;
 pub(crate) const TAP_SHORT_PULSE_SCALE: u32 = 8;
 pub(crate) const TAP_MAX_SHORT_PULSE: u32 = u8::MAX as u32;

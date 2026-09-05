@@ -2,21 +2,42 @@
 // src/fdd1541/load.rs — Disk image mounting and format decoding
 // =======================================================
 
+use super::constants::{DISK_CHANGE_CYCLES, G64_HEADER_LEN, G64_MAX_HALF_TRACKS, G64_SIGNATURE};
+use super::disk_drive::DiskMechanism;
+use super::media::{DiskFormat, TrackSpeed, sector_offset, total_sectors};
+use super::{d7z, gcr, nib};
+use std::fs;
+use std::path::Path;
+use std::sync::atomic::Ordering;
+
 impl DiskMechanism {
-	/* Mounting converts each supported container into circular track bytes plus per-byte density metadata, then installs the medium without resetting mechanical position. */
-/* Mount parses a complete replacement medium before committing it, so a malformed image cannot destroy the currently inserted disk. */
+	/* Mounting parses a complete replacement medium before committing it, converts supported containers into circular track bytes plus per-byte density metadata, and preserves the current mechanical position if the replacement is valid. */
 	pub fn mount(&mut self, path: &Path) -> bool {
 		let data = match fs::read(path) {
 			Ok(data) => data,
 			Err(_) => return false,
 		};
 
-		let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+		let extension = path
+			.extension()
+			.and_then(|value| value.to_str())
+			.unwrap_or("")
+			.to_ascii_lowercase();
+		let is_d7z = d7z::is_d7z(&data);
 		let is_g64 = data.get(0..8) == Some(G64_SIGNATURE.as_slice());
-		let nib_data = if extension == "nbz" { nib::decode_nbz(&data) } else { None };
+		let nib_data = if extension == "nbz" {
+			nib::decode_nbz(&data)
+		} else {
+			None
+		};
 		let mut replacement = Self::new();
 
-		let (mounted, format, original) = if let Some(decoded) = nib_data {
+		let (mounted, format, original) = if is_d7z {
+			let Some(decoded) = d7z::decode(&data) else {
+				return false;
+			};
+			(replacement.mount_d64(&decoded), DiskFormat::D7z, decoded)
+		} else if let Some(decoded) = nib_data {
 			(replacement.mount_nib(&decoded), DiskFormat::Nbz, decoded)
 		} else {
 			let (mounted, format) = if extension == "nib" {
@@ -35,7 +56,9 @@ impl DiskMechanism {
 
 		replacement.inherit_runtime_state(self);
 
-		let _ = self.flush_now();
+		if !self.flush_now() {
+			return false;
+		}
 
 		replacement.write_protect = fs::metadata(path)
 			.map(|metadata| metadata.permissions().readonly())
@@ -61,14 +84,15 @@ impl DiskMechanism {
 		for tracks in 35..=42 {
 			let sectors = total_sectors(tracks);
 			let payload_length = sectors.checked_mul(256)?;
-			if data_length == payload_length || data_length == payload_length.checked_add(sectors)? {
+			if data_length == payload_length
+				|| data_length == payload_length.checked_add(sectors)?
+			{
 				return Some(tracks);
 			}
 		}
 		None
 	}
-	/* D64 stores logical sectors, so mounting synthesises the headers, gaps, checksums and GCR stream that a real 1541 would encounter. */
-/* D64 sectors are expanded into canonical GCR tracks so the running drive always consumes a physical-track representation. */
+	/* D64 stores logical sectors, so mounting expands them into canonical GCR tracks with the headers, gaps and checksums that the running drive encounters as a physical-track representation. */
 	fn mount_d64(&mut self, data: &[u8]) -> bool {
 		let Some(num_tracks) = Self::d64_track_count(data.len()) else {
 			return false;
@@ -127,11 +151,11 @@ impl DiskMechanism {
 		let Some(image) = nib::decode_nib(data) else {
 			return false;
 		};
-		let Some(last_track) = image.tracks.iter().rposition(|track| !track.is_empty()) else {
+		let Some(last_track) = image.rings.iter().rposition(|ring| !ring.is_empty()) else {
 			return false;
 		};
-		self.tracks = image.tracks;
-		self.track_speed = image.densities.into_iter().map(TrackSpeed::Constant).collect();
+		self.tracks = image.rings;
+		self.track_speed = image.zones.into_iter().map(TrackSpeed::Constant).collect();
 		self.track_offsets_g64.clear();
 		self.speed_offsets_g64.clear();
 		self.max_track_size_g64 = 0;
@@ -147,8 +171,7 @@ impl DiskMechanism {
 		self.disk_change_cycles = DISK_CHANGE_CYCLES;
 		true
 	}
-	/* G64 supplies raw circular track bytes and speed information; no sector normalisation is performed during mount. */
-/* G64 mounting preserves supplied track bytes and per-byte speed information instead of normalising through DOS sectors. */
+	/* G64 mounting preserves the supplied circular track bytes and speed information directly, without normalising the image through DOS sectors. */
 	fn mount_g64(&mut self, data: &[u8]) -> bool {
 		if data.len() < G64_HEADER_LEN {
 			return false;
@@ -212,7 +235,9 @@ impl DiskMechanism {
 				speeds.push(TrackSpeed::Constant(speed_val as u8));
 				speed_offsets.push(None);
 			} else if speed_val + speed_block_len <= data.len() {
-				speeds.push(TrackSpeed::PerByte(data[speed_val..speed_val + speed_block_len].to_vec()));
+				speeds.push(TrackSpeed::PerByte(
+					data[speed_val..speed_val + speed_block_len].to_vec(),
+				));
 				speed_offsets.push(Some(speed_val));
 			} else {
 				return false;
@@ -250,7 +275,9 @@ impl DiskMechanism {
 		true
 	}
 	pub fn unmount(&mut self) -> bool {
-		let _ = self.flush_now();
+		if !self.flush_now() {
+			return false;
+		}
 
 		self.tracks.clear();
 		self.track_speed.clear();

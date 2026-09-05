@@ -1,15 +1,16 @@
 // =======================================================
-// src/sid/waveforms.rs — MOS 6581R4AR waveform coupling
+// src/sid/waveforms.rs — SID waveform generation
 // =======================================================
 
+/* Combined-waveform line coupling and settled lookup-table generation. */
+
 use super::constants::{
-	COMBINED_WAVEFORM_DIRECTIONAL_SKEW, COMBINED_WAVEFORM_DISTANCE_DECAY,
-	COMBINED_WAVEFORM_INTERACTION_GAIN, COMBINED_WAVEFORM_NEIGHBOUR_COUPLING,
-	COMBINED_WAVEFORM_LOADING_SCALE,
-	COMBINED_WAVEFORM_NOISE_LOAD,
-	COMBINED_WAVEFORM_PULSE_LOAD, COMBINED_WAVEFORM_RETENTION_THRESHOLD,
-	COMBINED_WAVEFORM_SAW_LOAD, COMBINED_WAVEFORM_TABLE_SIZE,
-	COMBINED_WAVEFORM_TRIANGLE_LOAD, BIT_COUNT, WAVEFORM_COUNT, WAVEFORM_MASK,
+	BIT_COUNT, COMBINED_WAVEFORM_DIRECTIONAL_SKEW_BY_SELECTION,
+	COMBINED_WAVEFORM_DISTANCE_DECAY_BY_SELECTION, COMBINED_WAVEFORM_INTERACTION_GAIN,
+	COMBINED_WAVEFORM_LOADING_SCALE, COMBINED_WAVEFORM_NEIGHBOUR_COUPLING,
+	COMBINED_WAVEFORM_NOISE_LOAD, COMBINED_WAVEFORM_PULSE_LOAD,
+	COMBINED_WAVEFORM_RETENTION_THRESHOLD_BY_SELECTION, COMBINED_WAVEFORM_SAW_LOAD,
+	COMBINED_WAVEFORM_TABLE_SIZE, COMBINED_WAVEFORM_TRIANGLE_LOAD, WAVEFORM_COUNT, WAVEFORM_MASK,
 };
 
 /* Combined-waveform tables are generated from an electrical line-coupling model rather than arithmetic mixing. Only selections with several active drivers need a settled twelve-line table; pure waveforms remain direct oscillator paths. */
@@ -51,7 +52,9 @@ impl GeneratedWaveShapes {
 }
 
 impl Default for GeneratedWaveShapes {
-	fn default() -> Self { Self::new() }
+	fn default() -> Self {
+		Self::new()
+	}
 }
 
 /* LineArray iteratively settles the coupled waveform bus. Pulled-low neighbours reduce each line until the network reaches the fixed point represented in the lookup table. */
@@ -72,18 +75,39 @@ impl LineArray {
 				let signed_distance = source as isize - destination as isize;
 				let distance = signed_distance.unsigned_abs() as i32;
 				let direction = if signed_distance < 0 { -1.0 } else { 1.0 };
+				let distance_decay =
+					COMBINED_WAVEFORM_DISTANCE_DECAY_BY_SELECTION[selection as usize];
 				coupling[destination][source] = COMBINED_WAVEFORM_NEIGHBOUR_COUPLING
-					* COMBINED_WAVEFORM_DISTANCE_DECAY.powi(distance - 1)
-					* (1.0 + direction * COMBINED_WAVEFORM_DIRECTIONAL_SKEW);
+					* distance_decay.powi(distance - 1)
+					* (1.0
+						+ direction
+							* COMBINED_WAVEFORM_DIRECTIONAL_SKEW_BY_SELECTION[selection as usize]);
 			}
 		}
 
-		let static_load = if selection & 0x01 != 0 { COMBINED_WAVEFORM_TRIANGLE_LOAD } else { 0.0 }
-			+ if selection & 0x02 != 0 { COMBINED_WAVEFORM_SAW_LOAD } else { 0.0 }
-			+ if selection & 0x04 != 0 { COMBINED_WAVEFORM_PULSE_LOAD } else { 0.0 }
-			+ if selection & 0x08 != 0 { COMBINED_WAVEFORM_NOISE_LOAD } else { 0.0 };
+		let static_load = if selection & 0x01 != 0 {
+			COMBINED_WAVEFORM_TRIANGLE_LOAD
+		} else {
+			0.0
+		} + if selection & 0x02 != 0 {
+			COMBINED_WAVEFORM_SAW_LOAD
+		} else {
+			0.0
+		} + if selection & 0x04 != 0 {
+			COMBINED_WAVEFORM_PULSE_LOAD
+		} else {
+			0.0
+		} + if selection & 0x08 != 0 {
+			COMBINED_WAVEFORM_NOISE_LOAD
+		} else {
+			0.0
+		};
 
-		Self { selection, coupling, static_load }
+		Self {
+			selection,
+			coupling,
+			static_load,
+		}
 	}
 
 	fn generate(&self) -> Vec<u16> {
@@ -99,9 +123,9 @@ impl LineArray {
 			charge[bit] = f32::from((value >> bit) & 1);
 		}
 
-		let interaction_scale = 1.0
-			+ COMBINED_WAVEFORM_INTERACTION_GAIN
-				* (self.selection.count_ones() as f32 - 2.0);
+		let source_excess = (self.selection.count_ones() as f32 - 2.0).max(0.0);
+		let interaction_scale =
+			1.0 + COMBINED_WAVEFORM_INTERACTION_GAIN * source_excess * source_excess;
 		let loading_scale = COMBINED_WAVEFORM_LOADING_SCALE[self.selection as usize];
 		for _ in 0..3 {
 			let previous = charge;
@@ -119,9 +143,11 @@ impl LineArray {
 			}
 		}
 
+		let retention_threshold =
+			COMBINED_WAVEFORM_RETENTION_THRESHOLD_BY_SELECTION[self.selection as usize];
 		let mut output = 0u16;
 		for (bit, level) in charge.iter().enumerate() {
-			if *level >= COMBINED_WAVEFORM_RETENTION_THRESHOLD {
+			if *level >= retention_threshold {
 				output |= 1 << bit;
 			}
 		}

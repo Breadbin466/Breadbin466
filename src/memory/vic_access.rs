@@ -12,7 +12,6 @@ use crate::pla::map_vic_addr;
 pub struct VICMemoryController;
 
 impl VICMemoryController {
-
 	/* CIA2 selects one of four 16 KiB banks. Within the bank, the PLA may substitute character ROM or cartridge ROMH; otherwise the VIC reads physical RAM directly (C64-PRG-1982, VIC memory organisation; C64-PLA-DISSECTED-2012, VIC maps). */
 	#[inline(always)]
 	pub fn read(
@@ -32,9 +31,9 @@ impl VICMemoryController {
 
 		match region {
 			MapRegion::Char => rom.read_char(va14 & 0x0FFF),
-			MapRegion::RomH => {
-				cartridge.read_romh(va14 & 0x1FFF, cycle).unwrap_or_else(|| ram.read(phys_addr))
-			}
+			MapRegion::RomH => cartridge
+				.read_romh(va14 & 0x1FFF, cycle)
+				.unwrap_or_else(|| ram.read(phys_addr)),
 			MapRegion::Ram => ram.read(phys_addr),
 			_ => floating_byte,
 		}

@@ -30,7 +30,11 @@ impl ViaChip {
 	pub fn set_pb6(&mut self, level: bool) {
 		let falling = self.pb6_prev && !level;
 		self.pb6_prev = level;
-		if !falling || !self.t2_running || (self.acr & 0x20) == 0 || !self.t2_pulse_count_mode_previous {
+		if !falling
+			|| !self.t2_running
+			|| (self.acr & 0x20) == 0
+			|| !self.t2_pulse_count_mode_previous
+		{
 			return;
 		}
 		self.t2_counter = self.t2_counter.wrapping_sub(1);

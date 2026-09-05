@@ -1,3 +1,7 @@
+// =======================================================
+// src/reu/constants.rs — MOS 8726 register constants
+// =======================================================
+
 /*
  * MOS 8726 register indices and bit definitions.
  *
@@ -25,7 +29,8 @@ pub(crate) const STATUS_VERSION: u8 = 0x10;
 pub(crate) const STATUS_VERIFY_ERROR: u8 = 0x20;
 pub(crate) const STATUS_END_OF_BLOCK: u8 = 0x40;
 pub(crate) const STATUS_IRQ_PENDING: u8 = 0x80;
-pub(crate) const STATUS_EVENT_MASK: u8 = STATUS_VERIFY_ERROR | STATUS_END_OF_BLOCK | STATUS_IRQ_PENDING;
+pub(crate) const STATUS_EVENT_MASK: u8 =
+	STATUS_VERIFY_ERROR | STATUS_END_OF_BLOCK | STATUS_IRQ_PENDING;
 
 pub(crate) const COMMAND_TRANSFER_TYPE_MASK: u8 = 0x03;
 pub(crate) const COMMAND_FF00_DISABLE: u8 = 0x10;

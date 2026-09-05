@@ -2,11 +2,14 @@
 // src/fdd1541/disk_rotation.rs — Disk angular position and track timing
 // =======================================================
 
+use super::constants::DRIVE_MASTER_CYCLES_PER_ROTATION;
+use super::disk_drive::DiskMechanism;
+
 /* Rotation is tracked as a circular byte-and-bit position. Density controls when that position advances, while the stored track length defines the revolution boundary. */
 impl DiskMechanism {
 	#[inline(always)]
 	/* Advancing past the final bit wraps to the first bit without resetting decoder state, matching continuous spindle rotation. */
-	fn advance_track_position(&mut self, track_length: usize) {
+	pub(super) fn advance_track_position(&mut self, track_length: usize) {
 		self.bit_pos += 1;
 		if self.bit_pos >= 8 {
 			self.bit_pos = 0;
@@ -32,17 +35,19 @@ impl DiskMechanism {
 	}
 	#[inline(always)]
 	/* G64 speed tables describe the density of the byte about to be read, not merely the byte currently under the head. */
-	fn playback_density_for_next_bit(&self, track_index: usize) -> Option<u8> {
+	pub(super) fn playback_density_for_next_bit(&self, track_index: usize) -> Option<u8> {
 		let track_length = self.tracks.get(track_index)?.len();
 		if track_length == 0 {
 			return None;
 		}
 		let (byte_pos, _) = self.next_track_position(track_length);
-		self.track_speed.get(track_index)?.density_for_byte(byte_pos)
+		self.track_speed
+			.get(track_index)?
+			.density_for_byte(byte_pos)
 	}
 	#[inline(always)]
 	/* An unformatted or missing half-track still rotates mechanically. The synthetic track length preserves angular continuity while the read channel supplies instability separately. */
-	fn advance_empty_track_rotation(&mut self) {
+	pub(super) fn advance_empty_track_rotation(&mut self) {
 		if self.phase_track_length == 0 {
 			return;
 		}

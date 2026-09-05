@@ -190,7 +190,9 @@ pub trait CartridgeMapper {
 	fn read_romh(&mut self, offset: u16, cycle: u64) -> Option<u8>;
 	fn peek_roml(&self, offset: u16, cycle: u64) -> Option<u8>;
 	fn peek_romh(&self, offset: u16, cycle: u64) -> Option<u8>;
-	fn peek_io(&self, _addr: u16, _cycle: u64) -> Option<u8> { None }
+	fn peek_io(&self, _addr: u16, _cycle: u64) -> Option<u8> {
+		None
+	}
 	fn read_io(&mut self, addr: u16, cycle: u64) -> Option<u8>;
 	fn write_io(&mut self, addr: u16, value: u8, cycle: u64);
 	fn write_rom(&mut self, addr: u16, value: u8, cycle: u64);

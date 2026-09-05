@@ -39,7 +39,11 @@ impl Cia1 {
 	}
 
 	pub fn peek(&self, addr: u16) -> u8 {
-		match addr & 0x000F { 0x00 => self.read_port_a(), 0x01 => self.read_port_b(), reg => self.inner.peek(reg as u8) }
+		match addr & 0x000F {
+			0x00 => self.read_port_a(),
+			0x01 => self.read_port_b(),
+			reg => self.inner.peek(reg as u8),
+		}
 	}
 
 	#[inline(always)]
@@ -48,7 +52,7 @@ impl Cia1 {
 		match addr & 0x000F {
 			0x00 => self.read_port_a(),
 			0x01 => self.read_port_b(),
-			reg  => self.inner.read(reg as u8),
+			reg => self.inner.read(reg as u8),
 		}
 	}
 
@@ -97,11 +101,19 @@ impl Cia1 {
 		let (ta_out, tb_out) = self.inner.timer_outputs();
 
 		if (self.inner.ta.cr & CR_PBON) != 0 {
-			if ta_out { val |= 0x40; } else { val &= !0x40; }
+			if ta_out {
+				val |= 0x40;
+			} else {
+				val &= !0x40;
+			}
 		}
 
 		if (self.inner.tb.cr & CR_PBON) != 0 {
-			if tb_out { val |= 0x80; } else { val &= !0x80; }
+			if tb_out {
+				val |= 0x80;
+			} else {
+				val &= !0x80;
+			}
 		}
 
 		val
@@ -119,7 +131,18 @@ impl Cia1 {
 		self.keyboard_matrix = [0xFF; 8];
 	}
 
-	pub fn set_flag_pin(&mut self, state: bool) { self.inner.set_flag_pin(state); }
-	pub fn sp_output(&self) -> bool { self.inner.sp_output() }
-	pub fn is_irq_active(&self) -> bool { self.inner.irq_line }
+	/* The physical port-A pin levels select which control port reaches the shared SID POT inputs. */
+	pub fn port_a_pin_levels(&self) -> u8 {
+		self.inner.pra | !self.inner.ddra
+	}
+
+	pub fn set_flag_pin(&mut self, state: bool) {
+		self.inner.set_flag_pin(state);
+	}
+	pub fn sp_output(&self) -> bool {
+		self.inner.sp_output()
+	}
+	pub fn is_irq_active(&self) -> bool {
+		self.inner.irq_line
+	}
 }

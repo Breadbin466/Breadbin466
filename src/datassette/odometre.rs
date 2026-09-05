@@ -3,11 +3,8 @@
 // =======================================================
 
 use super::constants::{
-	C64_PAL_CYCLES_PER_SECOND,
-	ODOMETRE_INITIAL_REEL_RADIUS_METRES,
-	ODOMETRE_MAX_VALUE,
-	ODOMETRE_TAPE_SPEED_METRES_PER_SECOND,
-	ODOMETRE_TAPE_THICKNESS_METRES,
+	C64_PAL_CYCLES_PER_SECOND, ODOMETRE_INITIAL_REEL_RADIUS_METRES, ODOMETRE_MAX_VALUE,
+	ODOMETRE_TAPE_SPEED_METRES_PER_SECOND, ODOMETRE_TAPE_THICKNESS_METRES,
 	ODOMETRE_TURNS_PER_COUNTER_UNIT,
 };
 
@@ -36,9 +33,12 @@ impl Odometre {
 		let current_t = motor_cycles as f64 / C64_PAL_CYCLES_PER_SECOND;
 
 		/* Wound tape adds annular area linearly with travelled length; solving that area for radius produces the square-root term. */
-		let r_t = (self.r0 * self.r0 + (self.v * self.thickness * current_t) / std::f64::consts::PI).sqrt();
+		let r_t = (self.r0 * self.r0
+			+ (self.v * self.thickness * current_t) / std::f64::consts::PI)
+			.sqrt();
 		/* Dividing the accumulated annular area by tape cross-section yields the number of layers and therefore reel revolutions. */
-		let total_turns = (std::f64::consts::PI * (r_t * r_t - self.r0 * self.r0)) / (self.v * self.thickness);
+		let total_turns =
+			(std::f64::consts::PI * (r_t * r_t - self.r0 * self.r0)) / (self.v * self.thickness);
 		let counter_units = total_turns / ODOMETRE_TURNS_PER_COUNTER_UNIT;
 
 		counter_units.clamp(0.0, ODOMETRE_MAX_VALUE)

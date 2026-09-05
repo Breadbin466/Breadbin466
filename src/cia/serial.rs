@@ -5,13 +5,13 @@
 #[derive(Clone, Copy, Default)]
 /* The visible SDR byte is kept separate from the active shift byte so software can queue the following transfer. */
 pub struct SerialShiftRegister {
-	pub data:          u8,
-	pub shift_data:    u8,
-	pub shift_count:   u8,
-	pub shifting:      bool,
-	pub input_mode:    bool,
-	pub output_bit:    bool,
-	pub cnt_output:    bool,
+	pub data: u8,
+	pub shift_data: u8,
+	pub shift_count: u8,
+	pub shifting: bool,
+	pub input_mode: bool,
+	pub output_bit: bool,
+	pub cnt_output: bool,
 	pub write_pending: bool,
 }
 

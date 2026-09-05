@@ -2,9 +2,9 @@
 // src/memory/rom.rs — Replaceable system ROM storage
 // =======================================================
 
-use crate::memory::constants::{BASIC_ROM, KERNAL_ROM, CHAR_ROM};
-use std::path::Path;
 use crate::memory::constants::*;
+use crate::memory::constants::{BASIC_ROM, CHAR_ROM, KERNAL_ROM};
+use std::path::Path;
 
 /* ROMStorage owns replaceable copies of the three system ROM images. Address visibility remains a PLA concern; this type only stores and indexes their contents. */
 pub struct ROMStorage {
@@ -14,7 +14,7 @@ pub struct ROMStorage {
 }
 
 impl ROMStorage {
-/* Construction begins with embedded reference images for all three sockets, providing a complete firmware set before any optional replacement is applied. */
+	/* Construction begins with embedded reference images for all three sockets, providing a complete firmware set before any optional replacement is applied. */
 	pub fn new() -> Self {
 		Self {
 			basic: Box::new(*BASIC_ROM),
@@ -31,7 +31,7 @@ impl ROMStorage {
 		Ok(())
 	}
 
-/* A custom character image is validated against the physical 4 KiB socket before replacing the active contents. */
+	/* A custom character image is validated against the physical 4 KiB socket before replacing the active contents. */
 	pub fn load_custom_char_rom(&mut self, path: &Path) -> crate::emulator::Result<()> {
 		let data = std::fs::read(path)?;
 		if data.len() != CHAR_ROM_SIZE {
@@ -41,7 +41,7 @@ impl ROMStorage {
 		Ok(())
 	}
 
-/* A custom BASIC image replaces only its 8 KiB socket, preserving the other two system ROMs. */
+	/* A custom BASIC image replaces only its 8 KiB socket, preserving the other two system ROMs. */
 	pub fn load_custom_basic_rom(&mut self, path: &Path) -> crate::emulator::Result<()> {
 		let data = std::fs::read(path)?;
 		if data.len() != BASIC_ROM_SIZE {
@@ -51,7 +51,7 @@ impl ROMStorage {
 		Ok(())
 	}
 
-/* A custom KERNAL image replaces only its 8 KiB socket, preserving BASIC and character ROM contents. */
+	/* A custom KERNAL image replaces only its 8 KiB socket, preserving BASIC and character ROM contents. */
 	pub fn load_custom_kernal_rom(&mut self, path: &Path) -> crate::emulator::Result<()> {
 		let data = std::fs::read(path)?;
 		if data.len() != KERNAL_ROM_SIZE {

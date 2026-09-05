@@ -2,12 +2,14 @@
 // src/fdd1541/thread.rs — Free-running 1541 worker thread
 // =======================================================
 
-use super::constants::{DRIVE_BATCH_LIMIT, DRIVE_MAX_SKEW, DRIVE_SKEW_CHECK_MASK, DRIVE_TIGHT_WINDOW};
+use super::constants::{
+	DRIVE_BATCH_LIMIT, DRIVE_MAX_SKEW, DRIVE_SKEW_CHECK_MASK, DRIVE_TIGHT_WINDOW,
+};
 use std::hint::spin_loop;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -89,9 +91,14 @@ impl DriveWorker {
 	}
 
 	#[inline(always)]
-	pub(super) fn wait_for_drive(&self, minimum: u64) {
+	pub(super) fn wait_for_drive(&mut self, minimum: u64) {
 		let mut spins = 0u32;
 		while self.cable.drive_cycle.0.load(Ordering::Relaxed) < minimum {
+			if !self.cable.device_events.is_empty() {
+				self.cable
+					.device_events
+					.drain_up_to(minimum, &mut self.device_view);
+			}
 			if spins < 16384 {
 				spin_loop();
 				spins += 1;
@@ -137,7 +144,11 @@ impl DriveWorker {
 			return self.device_view;
 		}
 
-		if self.cable.device_events.drain_up_to(cycle, &mut self.device_view) {
+		if self
+			.cable
+			.device_events
+			.drain_up_to(cycle, &mut self.device_view)
+		{
 			self.tight = DRIVE_TIGHT_WINDOW;
 		}
 		self.device_view
@@ -177,6 +188,24 @@ impl DriveWorker {
 		}
 		self.send(Request::Unmount);
 		self.receive_boolean()
+	}
+
+	/* Explicit host shutdown persistence temporarily acquires the drive only when necessary, so a failed final flush can be reported before worker destruction while preserving the normal ownership model. */
+	pub fn flush_media(&mut self) -> bool {
+		let already_owned = self.local_drive.is_some();
+		let completed_cycle = self.cable.host_cycle.0.load(Ordering::Relaxed);
+		if !already_owned {
+			self.take_ownership(completed_cycle);
+		}
+		let flushed = self
+			.local_drive
+			.as_mut()
+			.expect("1541 ownership unavailable during explicit flush")
+			.flush_now();
+		if !already_owned {
+			self.return_ownership(completed_cycle);
+		}
+		flushed
 	}
 
 	/* Hard reset acquires the drive, commits pending media writes and re-bases both cable cycle counters around the host's current IEC state. */
@@ -219,7 +248,9 @@ impl DriveWorker {
 
 	pub fn load_custom_dos_rom(&mut self, path: PathBuf) -> (Result<(), String>, DriveStatus) {
 		if let Some(drive) = self.local_drive.as_mut() {
-			let result = drive.load_custom_dos_rom(&path).map_err(|error| error.to_string());
+			let result = drive
+				.load_custom_dos_rom(&path)
+				.map_err(|error| error.to_string());
 			return (result, DriveStatus::from_drive(drive));
 		}
 		self.send(Request::LoadCustomDosRom(path));
@@ -272,6 +303,7 @@ impl Drop for DriveWorker {
 			let completed_cycle = self.cable.host_cycle.0.load(Ordering::Relaxed);
 			self.return_ownership(completed_cycle);
 		}
+		self.cable.stopping.store(true, Ordering::Release);
 		let _ = self.request_tx.send(Request::Shutdown);
 		if let Some(thread) = self.thread.take() {
 			let _ = thread.join();
@@ -308,38 +340,56 @@ fn worker_main(
 			Ok(request) => {
 				let response = match request {
 					Request::Status => {
-						let active_drive = drive.as_mut().expect("1541 worker does not own the drive");
+						let active_drive =
+							drive.as_mut().expect("1541 worker does not own the drive");
 						Some(Response::Status(DriveStatus::from_drive(active_drive)))
 					}
 					Request::Mount(path) => {
-						let active_drive = drive.as_mut().expect("1541 worker does not own the drive");
+						let active_drive =
+							drive.as_mut().expect("1541 worker does not own the drive");
 						let mounted = active_drive.mount(&path);
-						Some(Response::Boolean(mounted, DriveStatus::from_drive(active_drive)))
+						Some(Response::Boolean(
+							mounted,
+							DriveStatus::from_drive(active_drive),
+						))
 					}
 					Request::Unmount => {
-						let active_drive = drive.as_mut().expect("1541 worker does not own the drive");
+						let active_drive =
+							drive.as_mut().expect("1541 worker does not own the drive");
 						let unmounted = active_drive.unmount();
-						Some(Response::Boolean(unmounted, DriveStatus::from_drive(active_drive)))
+						Some(Response::Boolean(
+							unmounted,
+							DriveStatus::from_drive(active_drive),
+						))
 					}
 					Request::Reset => {
-						let active_drive = drive.as_mut().expect("1541 worker does not own the drive");
+						let active_drive =
+							drive.as_mut().expect("1541 worker does not own the drive");
 						let _ = active_drive.flush_now();
 						active_drive.reset();
 						cable.device_events.clear();
 						emitted = cable.host_cycle.0.load(Ordering::Relaxed);
 						published = active_drive.device_iec_state();
 						cable.drive_cycle.0.store(emitted, Ordering::Relaxed);
-						Some(Response::Reset(published, DriveStatus::from_drive(active_drive)))
+						Some(Response::Reset(
+							published,
+							DriveStatus::from_drive(active_drive),
+						))
 					}
 					Request::LoadCustomDosRom(path) => {
-						let active_drive = drive.as_mut().expect("1541 worker does not own the drive");
+						let active_drive =
+							drive.as_mut().expect("1541 worker does not own the drive");
 						let result = active_drive
 							.load_custom_dos_rom(&path)
 							.map_err(|error| error.to_string());
-						Some(Response::LoadResult(result, DriveStatus::from_drive(active_drive)))
+						Some(Response::LoadResult(
+							result,
+							DriveStatus::from_drive(active_drive),
+						))
 					}
 					Request::ResetDosRom => {
-						let active_drive = drive.as_mut().expect("1541 worker does not own the drive");
+						let active_drive =
+							drive.as_mut().expect("1541 worker does not own the drive");
 						active_drive.reset_dos_rom();
 						Some(Response::Status(DriveStatus::from_drive(active_drive)))
 					}
@@ -349,7 +399,12 @@ fn worker_main(
 					}
 					Request::TakeOwnership => {
 						let owned_drive = drive.take().expect("1541 worker does not own the drive");
-						Some(Response::Ownership(owned_drive, emitted, host_state, published))
+						Some(Response::Ownership(
+							owned_drive,
+							emitted,
+							host_state,
+							published,
+						))
 					}
 					Request::ReturnOwnership {
 						drive: returned_drive,
@@ -413,8 +468,13 @@ fn worker_main(
 			emitted = emitted.wrapping_add(1);
 			let device_state = active_drive.run_stable_host_cycle();
 			if device_state != published {
+				if !cable
+					.device_events
+					.push(emitted, device_state, &cable.stopping)
+				{
+					break;
+				}
 				published = device_state;
-				cable.device_events.push(emitted, device_state);
 			}
 		}
 		cable.drive_cycle.0.store(emitted, Ordering::Relaxed);

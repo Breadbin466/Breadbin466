@@ -6,21 +6,22 @@
 
 pub mod bank_storage;
 pub mod bus_configuration;
+pub mod cartridge_device;
 pub mod constants;
-pub mod cartridge_device;pub mod crt_layout;
+pub mod crt_layout;
 pub mod crt_loader;
-pub mod mapper_creation;
-pub mod mapper_interface;
 pub mod mapper_action_replay;
 pub mod mapper_action_replay_legacy;
 pub mod mapper_atomic_power;
 pub mod mapper_c64gs;
+pub mod mapper_creation;
 pub mod mapper_dinamic;
 pub mod mapper_easyflash;
 pub mod mapper_epyx_fastload;
 pub mod mapper_final_cartridge_3;
 pub mod mapper_fun_play;
 pub mod mapper_gmod2;
+pub mod mapper_interface;
 pub mod mapper_kcs_power;
 pub mod mapper_magic_desk;
 pub mod mapper_ocean;

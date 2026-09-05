@@ -2,264 +2,194 @@
 // src/fdd1541/nib.rs — NIB disk image encoding and decoding
 // =======================================================
 
-use crate::fdd1541::constants::{
-	NIB_TRACK_BYTES_MAX, NIB_TRACK_BYTES_MIN, NIB_TRACK_BYTES_TOLERANCE, NIB_HALF_TRACK_COUNT,
-	NIB_HEADER_LENGTH, NIB_CYCLE_SIGNATURE_BYTES, NIB_FORMATTED_GCR_RUN_BYTES,
-	NIB_SIGNATURE, NIB_TRACK_LENGTH,
-};
-use super::{d64, g64};
 pub use super::nbz::{decode_nbz, encode_nbz};
+use super::{d64, g64};
+use crate::fdd1541::constants::{
+	NIB_HALF_TRACK_COUNT, NIB_HEADER_LENGTH, NIB_SIGNATURE, NIB_TRACK_BYTES_MAX,
+	NIB_TRACK_BYTES_MIN, NIB_TRACK_LENGTH,
+};
 
-/* NibImage exposes recovered circular tracks and their density zones after removing the fixed 8192-byte capture padding. */
-pub struct NibImage {
-	pub tracks: Vec<Vec<u8>>,
-	pub densities: Vec<u8>,
+/* A NIB capture stores a fixed 8192-byte observation for each recorded head position. The drive model needs one circular revolution instead, so decoding recovers the most strongly repeated period that remains physically plausible for the recorded speed zone. */
+pub struct NibMedium {
+	pub rings: Vec<Vec<u8>>,
+	pub zones: Vec<u8>,
 }
 
-/* The NIB header maps capture blocks to half-tracks. Each block is reduced to the most plausible repeating revolution before entering the drive mechanism. */
-pub fn decode_nib(data: &[u8]) -> Option<NibImage> {
-	if data.len() < NIB_HEADER_LENGTH || data.get(..NIB_SIGNATURE.len()) != Some(NIB_SIGNATURE) {
+#[derive(Clone, Copy)]
+struct OrbitEstimate {
+	span: usize,
+	agreements: usize,
+	observations: usize,
+}
+
+/* The catalogue begins at byte 0x10 and contains pairs of half-track position and speed-zone code. Capture blocks follow the 256-byte catalogue in the same order as its populated entries. */
+pub fn decode_nib(container_bytes: &[u8]) -> Option<NibMedium> {
+	if container_bytes.len() < NIB_HEADER_LENGTH
+		|| container_bytes.get(..NIB_SIGNATURE.len()) != Some(NIB_SIGNATURE)
+	{
 		return None;
 	}
 
-	let mut entries = Vec::new();
-	let mut header_offset = 0x10usize;
-	while header_offset + 1 < NIB_HEADER_LENGTH {
-		let encoded_track = data[header_offset];
-		if encoded_track == 0 {
+	let mut catalogue = Vec::new();
+	let mut cursor = 0x10usize;
+	while cursor + 1 < NIB_HEADER_LENGTH {
+		let head_code = container_bytes[cursor];
+		if head_code == 0 {
 			break;
 		}
-		if encoded_track < 2 {
+		if head_code < 2 {
 			return None;
 		}
-		let track_index = usize::from(encoded_track - 2);
-		if track_index >= NIB_HALF_TRACK_COUNT
-			|| entries.iter().any(|(index, _)| *index == track_index)
+
+		let slot = usize::from(head_code - 2);
+		if slot >= NIB_HALF_TRACK_COUNT
+			|| catalogue.iter().any(|(known_slot, _)| *known_slot == slot)
 		{
 			return None;
 		}
-		entries.push((track_index, data[header_offset + 1] & 0x03));
-		header_offset += 2;
+
+		catalogue.push((slot, container_bytes[cursor + 1] & 0x03));
+		cursor += 2;
 	}
 
-	if entries.is_empty() {
+	if catalogue.is_empty() {
 		return None;
 	}
 
-	let expected_length = NIB_HEADER_LENGTH.checked_add(entries.len().checked_mul(NIB_TRACK_LENGTH)?)?;
-	if data.len() < expected_length {
+	let payload_bytes = catalogue.len().checked_mul(NIB_TRACK_LENGTH)?;
+	let required_bytes = NIB_HEADER_LENGTH.checked_add(payload_bytes)?;
+	if container_bytes.len() < required_bytes {
 		return None;
 	}
 
-	let mut tracks = vec![Vec::new(); NIB_HALF_TRACK_COUNT];
-	let mut densities = vec![0; NIB_HALF_TRACK_COUNT];
-	for (block_index, (track_index, density)) in entries.into_iter().enumerate() {
-		let start = NIB_HEADER_LENGTH + block_index * NIB_TRACK_LENGTH;
-		let source = &data[start..start + NIB_TRACK_LENGTH];
-		tracks[track_index] = extract_track(source, density);
-		densities[track_index] = density;
+	let mut rings = vec![Vec::new(); NIB_HALF_TRACK_COUNT];
+	let mut zones = vec![0; NIB_HALF_TRACK_COUNT];
+	for (ordinal, (slot, zone_code)) in catalogue.into_iter().enumerate() {
+		let capture_begin = NIB_HEADER_LENGTH + ordinal * NIB_TRACK_LENGTH;
+		let capture_end = capture_begin + NIB_TRACK_LENGTH;
+		let capture_window = &container_bytes[capture_begin..capture_end];
+		rings[slot] = recover_orbit(capture_window, zone_code);
+		zones[slot] = zone_code;
 	}
 
-	Some(NibImage { tracks, densities })
+	Some(NibMedium { rings, zones })
 }
 
-/* Encoding repeats each circular track to fill the fixed capture block while preserving half-track numbering and density metadata. */
-pub fn encode_nib(tracks: &[Vec<u8>], densities: &[u8]) -> Option<Vec<u8>> {
-	let populated: Vec<usize> = tracks
+/* Serialisation preserves every supplied circular byte stream verbatim and repeats it only as necessary to fill the fixed NIB capture window. */
+pub fn encode_nib(rings: &[Vec<u8>], zones: &[u8]) -> Option<Vec<u8>> {
+	let occupied_slots: Vec<usize> = rings
 		.iter()
 		.enumerate()
-		.filter_map(|(index, track)| (!track.is_empty()).then_some(index))
+		.filter_map(|(slot, ring)| (!ring.is_empty()).then_some(slot))
 		.collect();
-	if populated.is_empty() || populated.len() > NIB_HALF_TRACK_COUNT {
+	if occupied_slots.is_empty() || occupied_slots.len() > NIB_HALF_TRACK_COUNT {
 		return None;
 	}
 
-	let mut output = vec![0u8; NIB_HEADER_LENGTH + populated.len() * NIB_TRACK_LENGTH];
-	output[..NIB_SIGNATURE.len()].copy_from_slice(NIB_SIGNATURE);
-	output[NIB_SIGNATURE.len()] = 1;
+	let payload_bytes = occupied_slots.len().checked_mul(NIB_TRACK_LENGTH)?;
+	let total_bytes = NIB_HEADER_LENGTH.checked_add(payload_bytes)?;
+	let mut container_bytes = vec![0u8; total_bytes];
+	container_bytes[..NIB_SIGNATURE.len()].copy_from_slice(NIB_SIGNATURE);
+	container_bytes[NIB_SIGNATURE.len()] = 1;
 
-	for (block_index, track_index) in populated.into_iter().enumerate() {
-		let encoded_track = u8::try_from(track_index.checked_add(2)?).ok()?;
-		let header_offset = 0x10 + block_index * 2;
-		output[header_offset] = encoded_track;
-		output[header_offset + 1] = densities.get(track_index).copied().unwrap_or(0) & 0x03;
+	for (ordinal, slot) in occupied_slots.into_iter().enumerate() {
+		let head_code = u8::try_from(slot.checked_add(2)?).ok()?;
+		let catalogue_cursor = 0x10 + ordinal * 2;
+		container_bytes[catalogue_cursor] = head_code;
+		container_bytes[catalogue_cursor + 1] = zones.get(slot).copied().unwrap_or(0) & 0x03;
 
-		let track = tracks.get(track_index)?;
-		let block_offset = NIB_HEADER_LENGTH + block_index * NIB_TRACK_LENGTH;
-		for offset in 0..NIB_TRACK_LENGTH {
-			output[block_offset + offset] = track[offset % track.len()];
+		let ring = rings.get(slot)?;
+		let capture_begin = NIB_HEADER_LENGTH + ordinal * NIB_TRACK_LENGTH;
+		for capture_cursor in 0..NIB_TRACK_LENGTH {
+			container_bytes[capture_begin + capture_cursor] = ring[capture_cursor % ring.len()];
 		}
 	}
 
-	Some(output)
+	Some(container_bytes)
 }
 
-fn extract_track(source: &[u8], density: u8) -> Vec<u8> {
-	if source.len() != NIB_TRACK_LENGTH || !has_formatted_data(source) {
+/* At 300 RPM the 1541 sees five revolutions per second. Its four bit-cell rates therefore constrain a revolution to a narrow byte-count interval. The NIB window is deliberately longer than every legal interval, so the same magnetic circumference is observed again near the end of the capture. Recovering that circumference is a periodicity problem; sector layout, sync placement and the legality of the GCR payload are irrelevant. */
+fn recover_orbit(capture_window: &[u8], zone_code: u8) -> Vec<u8> {
+	if capture_window.len() != NIB_TRACK_LENGTH {
 		return Vec::new();
 	}
 
-	let minimum = NIB_TRACK_BYTES_MIN[usize::from(density)].saturating_sub(NIB_TRACK_BYTES_TOLERANCE);
-	let maximum = NIB_TRACK_BYTES_MAX[usize::from(density)];
-	let mut cycle = find_track_cycle(source, minimum);
-	if cycle.1 < minimum || cycle.1 > maximum {
-		cycle = find_nondos_track_cycle(source, minimum);
+	let zone_slot = usize::from(zone_code & 0x03);
+	let lower_span = NIB_TRACK_BYTES_MIN[zone_slot];
+	let upper_span = NIB_TRACK_BYTES_MAX[zone_slot].min(capture_window.len().saturating_sub(1));
+	if lower_span == 0 || lower_span > upper_span {
+		return capture_window.to_vec();
 	}
 
-	let (start, length) = cycle;
-	let Some(end) = start.checked_add(length).filter(|end| *end <= source.len()) else {
-		return source.to_vec();
+	let preferred_span = lower_span + (upper_span - lower_span) / 2;
+	let mut strongest = OrbitEstimate {
+		span: preferred_span,
+		agreements: 0,
+		observations: 1,
 	};
-	source.get(start..end).unwrap_or(source).to_vec()
-}
 
-/* DOS-formatted captures are aligned by matching sync-delimited signatures separated by at least one nominal revolution. */
-fn find_track_cycle(source: &[u8], minimum: usize) -> (usize, usize) {
-	let stop = source.len().saturating_sub(NIB_CYCLE_SIGNATURE_BYTES);
-	let mut start = 0usize;
-
-	loop {
-		if start + minimum >= stop {
-			break;
-		}
-
-		let mut data_position = start + minimum;
-		while let Some(candidate) = find_sync(source, data_position, stop) {
-			let mut left = start;
-			let mut right = candidate;
-			let mut matched = true;
-
-			loop {
-				if left + NIB_CYCLE_SIGNATURE_BYTES > stop || right + NIB_CYCLE_SIGNATURE_BYTES > stop
-					|| source[left..left + NIB_CYCLE_SIGNATURE_BYTES] != source[right..right + NIB_CYCLE_SIGNATURE_BYTES]
-				{
-					matched = false;
-					break;
-				}
-
-				let next_left = find_sync(source, left, stop);
-				let next_right = find_sync(source, right, stop);
-				match (next_left, next_right) {
-					(Some(new_left), Some(new_right)) => {
-						left = new_left;
-						right = new_right;
-					}
-					_ => break,
-				}
-			}
-
-			if matched && valid_data(source, candidate) {
-				return (start, candidate - start);
-			}
-			data_position = candidate.saturating_add(1);
-		}
-
-		let Some(next_start) = find_sync(source, start, stop) else {
-			break;
+	for probe_span in lower_span..=upper_span {
+		let observation_count = capture_window.len() - probe_span;
+		let agreement_count = (0..observation_count)
+			.filter(|&probe_cursor| {
+				capture_window[probe_cursor] == capture_window[probe_cursor + probe_span]
+			})
+			.count();
+		let proposal = OrbitEstimate {
+			span: probe_span,
+			agreements: agreement_count,
+			observations: observation_count,
 		};
-		start = next_start;
-	}
-
-	(0, source.len())
-}
-
-/* Protection tracks may lack ordinary sync structure, so the fallback searches for any sufficiently distant repeated signature. */
-fn find_nondos_track_cycle(source: &[u8], minimum: usize) -> (usize, usize) {
-	let stop = source.len().saturating_sub(NIB_CYCLE_SIGNATURE_BYTES);
-	for left in 0..stop {
-		let first_right = left.saturating_add(minimum);
-		if first_right >= stop {
-			break;
-		}
-		for right in first_right..stop {
-			if source[left..left + NIB_CYCLE_SIGNATURE_BYTES] == source[right..right + NIB_CYCLE_SIGNATURE_BYTES]
-				&& valid_data(source, right)
-			{
-				return (left, right - left);
-			}
+		if estimate_is_better(proposal, strongest, preferred_span) {
+			strongest = proposal;
 		}
 	}
-	(0, source.len())
-}
 
-fn find_sync(source: &[u8], position: usize, stop: usize) -> Option<usize> {
-	let mut current = position.saturating_add(1);
-	while current < stop {
-		if source[current] == 0xff && source[current - 1] != 0xff {
-			return Some(current);
-		}
-		current += 1;
-	}
-	None
-}
-
-fn valid_data(source: &[u8], start: usize) -> bool {
-	let Some(end) = start.checked_add(NIB_CYCLE_SIGNATURE_BYTES + 4) else {
-		return false;
+	let meaningful_repetition = strongest.agreements.saturating_mul(4) >= strongest.observations;
+	let selected_span = if meaningful_repetition {
+		strongest.span
+	} else {
+		preferred_span
 	};
-	if end > source.len() {
-		return false;
-	}
-	let mut redundant = 0usize;
-	for index in 0..NIB_CYCLE_SIGNATURE_BYTES {
-		let value = source[start + index];
-		if source[start + index + 1..=start + index + 4].contains(&value) {
-			redundant += 1;
-		}
-	}
-	redundant <= 1
+	capture_window[..selected_span].to_vec()
 }
 
-fn has_formatted_data(source: &[u8]) -> bool {
-	let mut run = 0usize;
-	for index in 0..source.len() {
-		if bad_gcr(source, index) {
-			run = 0;
-		} else {
-			run += 1;
-			if run >= NIB_FORMATTED_GCR_RUN_BYTES {
-				return true;
-			}
-		}
+fn estimate_is_better(
+	proposal: OrbitEstimate,
+	incumbent: OrbitEstimate,
+	preferred_span: usize,
+) -> bool {
+	let proposal_weight = proposal.agreements.saturating_mul(incumbent.observations);
+	let incumbent_weight = incumbent.agreements.saturating_mul(proposal.observations);
+	if proposal_weight != incumbent_weight {
+		return proposal_weight > incumbent_weight;
 	}
-	false
-}
 
-/* A run containing three consecutive zero bits cannot occur in valid Commodore 4-to-5 GCR and is used to reject unformatted noise. */
-fn bad_gcr(source: &[u8], index: usize) -> bool {
-	let previous = source[(index + source.len() - 1) % source.len()];
-	let data = (u16::from(previous & 0x03) << 8) | u16::from(source[index]);
-	let mut mask = 7u16 << 7;
-	while mask >= 7 {
-		if data & mask == 0 {
-			return true;
-		}
-		mask >>= 1;
-	}
-	false
+	proposal.span.abs_diff(preferred_span) < incumbent.span.abs_diff(preferred_span)
 }
 
 pub(crate) fn create_formatted() -> Vec<u8> {
-	let d64_image = d64::create_formatted();
-	let populated_tracks = 35usize;
-	let mut image = vec![0u8; NIB_HEADER_LENGTH + populated_tracks * NIB_TRACK_LENGTH];
-	image[..NIB_SIGNATURE.len()].copy_from_slice(NIB_SIGNATURE);
-	image[NIB_SIGNATURE.len()] = 1;
+	let logical_disk = d64::create_formatted();
+	let occupied_cylinders = 35usize;
+	let mut container_bytes = vec![0u8; NIB_HEADER_LENGTH + occupied_cylinders * NIB_TRACK_LENGTH];
+	container_bytes[..NIB_SIGNATURE.len()].copy_from_slice(NIB_SIGNATURE);
+	container_bytes[NIB_SIGNATURE.len()] = 1;
 
-	for track in 1..=35u8 {
-		let half_track = (usize::from(track) - 1) * 2;
-		let header_offset = 0x10 + (usize::from(track) - 1) * 2;
-		image[header_offset] = (half_track + 2) as u8;
-		image[header_offset + 1] = g64::standard_density(track);
+	for cylinder_number in 1..=35u8 {
+		let slot = (usize::from(cylinder_number) - 1) * 2;
+		let catalogue_cursor = 0x10 + (usize::from(cylinder_number) - 1) * 2;
+		container_bytes[catalogue_cursor] = (slot + 2) as u8;
+		container_bytes[catalogue_cursor + 1] = g64::standard_density(cylinder_number);
 
-		let track_data = g64::formatted_track(&d64_image, track);
-		let block_offset = NIB_HEADER_LENGTH + (usize::from(track) - 1) * NIB_TRACK_LENGTH;
-		for index in 0..NIB_TRACK_LENGTH {
-			image[block_offset + index] = track_data[index % track_data.len()];
+		let ring = g64::formatted_track(&logical_disk, cylinder_number);
+		let capture_begin =
+			NIB_HEADER_LENGTH + (usize::from(cylinder_number) - 1) * NIB_TRACK_LENGTH;
+		for capture_cursor in 0..NIB_TRACK_LENGTH {
+			container_bytes[capture_begin + capture_cursor] = ring[capture_cursor % ring.len()];
 		}
 	}
 
-	image
+	container_bytes
 }
 
 pub(crate) fn create_formatted_nbz() -> Vec<u8> {

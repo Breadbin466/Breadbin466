@@ -2,13 +2,15 @@
 // src/fdd1541/media.rs — Mounted media metadata and track-speed representation
 // =======================================================
 
-fn total_sectors(num_tracks: u8) -> usize {
+use super::gcr;
+
+pub(super) fn total_sectors(num_tracks: u8) -> usize {
 	(1..=num_tracks)
 		.map(|track| gcr::sectors_per_track(track) as usize)
 		.sum()
 }
 
-fn sector_offset(track: u8, sector: u8) -> usize {
+pub(super) fn sector_offset(track: u8, sector: u8) -> usize {
 	let mut sectors = 0usize;
 	for t in 1..track {
 		sectors += gcr::sectors_per_track(t) as usize;
@@ -18,7 +20,7 @@ fn sector_offset(track: u8, sector: u8) -> usize {
 
 /* A G64 track may have one density for its whole circumference or a packed two-bit density value for each group of four bytes. */
 #[derive(Clone)]
-enum TrackSpeed {
+pub(super) enum TrackSpeed {
 	/* One density zone applies around the entire circular track. */
 	Constant(u8),
 
@@ -27,7 +29,7 @@ enum TrackSpeed {
 }
 
 impl TrackSpeed {
-	fn density_for_byte(&self, byte_index: usize) -> Option<u8> {
+	pub(super) fn density_for_byte(&self, byte_index: usize) -> Option<u8> {
 		match self {
 			TrackSpeed::Constant(_) => None,
 			TrackSpeed::PerByte(block) => {
@@ -38,7 +40,12 @@ impl TrackSpeed {
 	}
 
 	/* The first local density change promotes a constant track to a per-byte speed block while preserving the previous density everywhere else. */
-	fn set_density_for_byte(&mut self, byte_index: usize, track_length: usize, density: u8) {
+	pub(super) fn set_density_for_byte(
+		&mut self,
+		byte_index: usize,
+		track_length: usize,
+		density: u8,
+	) {
 		let block_length = track_length.div_ceil(4).max(1);
 		if let TrackSpeed::Constant(previous) = self {
 			if (*previous & 0x03) == (density & 0x03) {
@@ -62,14 +69,15 @@ impl TrackSpeed {
 			}
 		}
 	}
-
 }
 
 /* DiskFormat records the mounted container so later writes can preserve its representational limits and compression policy. */
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum DiskFormat {
+pub(super) enum DiskFormat {
 	/* Sector image reconstructed through standard Commodore DOS headers and data blocks. */
 	D64,
+	/* D64 byte stream stored in the D7Z raw-LZMA2 container. */
+	D7z,
 	/* Byte-exact circular GCR tracks with optional per-position density tables. */
 	G64,
 	/* Raw captured revolutions whose track boundaries must be inferred during loading. */

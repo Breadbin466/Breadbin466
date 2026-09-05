@@ -3,8 +3,8 @@
 // =======================================================
 
 use super::constants::{
-	VIA_IFR_CA1, VIA_IFR_CA2, VIA_IFR_CB1, VIA_IFR_CB2, VIA_IFR_IRQ, VIA_IFR_SR,
-	VIA_IFR_T1, VIA_IFR_T2,
+	VIA_IFR_CA1, VIA_IFR_CA2, VIA_IFR_CB1, VIA_IFR_CB2, VIA_IFR_IRQ, VIA_IFR_SR, VIA_IFR_T1,
+	VIA_IFR_T2,
 };
 
 #[inline(always)]
@@ -417,7 +417,6 @@ impl ViaChip {
 			_ => {}
 		}
 	}
-
 }
 
 impl Default for ViaChip {

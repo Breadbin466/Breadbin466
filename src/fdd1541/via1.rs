@@ -149,9 +149,9 @@ impl Via1 {
 		let clk_out = (pins & 0x08) != 0;
 		let atna = (pins & 0x10) != 0;
 		let atna_output = (self.inner.ddrb & 0x10) != 0;
-		self.iec.set_device_lines(clk_out, data_out, atna, atna_output, cycle);
+		self.iec
+			.set_device_lines(clk_out, data_out, atna, atna_output, cycle);
 	}
-
 }
 
 impl Default for Via1 {

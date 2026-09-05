@@ -4,9 +4,9 @@
 
 #![allow(unused_unsafe)]
 
+use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::MainThreadMarker;
 use objc2_app_kit::{
 	NSAboutPanelOptionApplicationName, NSAboutPanelOptionApplicationVersion,
 	NSAboutPanelOptionCredits, NSAboutPanelOptionVersion, NSApplication,
@@ -14,8 +14,8 @@ use objc2_app_kit::{
 use objc2_foundation::{NSAttributedString, NSDictionary, NSString};
 use winit::window::Window;
 
+use super::about::{APP_NAME, COPYRIGHT, VERSION, description};
 use crate::emulator::Result;
-use super::about::{description, APP_NAME, COPYRIGHT, VERSION};
 
 /* AppKit requires About-panel objects to be created and presented on the main thread. Rust-owned strings are converted into retained Objective-C objects before the options dictionary is handed to NSApplication. */
 

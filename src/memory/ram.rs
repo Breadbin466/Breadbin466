@@ -10,12 +10,14 @@ pub struct RAMController {
 }
 
 impl RAMController {
-/* Normal construction starts from cleared RAM. This provides a stable cold-start state without inventing cache flags or other software-visible data. */
+	/* Normal construction starts from cleared RAM. This provides a stable cold-start state without inventing cache flags or other software-visible data. */
 	pub fn new() -> Self {
-		Self { data: Box::new([0u8; RAM_SIZE]) }
+		Self {
+			data: Box::new([0u8; RAM_SIZE]),
+		}
 	}
 
-/* Clear restores the defined cold-start RAM state. */
+	/* Clear restores the defined cold-start RAM state. */
 	pub fn clear(&mut self) {
 		self.data.fill(0x00);
 	}

@@ -2,12 +2,12 @@
 // src/ui/about_linux.rs — Native GTK About dialog backend
 // =======================================================
 
-use crate::ui::constants::{ICON_CANDIDATES};
+use crate::ui::constants::ICON_CANDIDATES;
 use gtk::prelude::*;
 use winit::window::Window;
 
+use super::about::{APP_NAME, COPYRIGHT, VERSION, description};
 use crate::emulator::Result;
-use super::about::{description, APP_NAME, COPYRIGHT, VERSION};
 
 /* The GTK backend creates a non-blocking native About dialog and resolves the first icon name available in the current desktop theme. */
 
@@ -34,5 +34,7 @@ pub fn show(_window: &Window) -> Result<()> {
 
 fn resolve_icon_name() -> Option<&'static str> {
 	let theme = gtk::IconTheme::default()?;
-	ICON_CANDIDATES.into_iter().find(|name| theme.has_icon(name))
+	ICON_CANDIDATES
+		.into_iter()
+		.find(|name| theme.has_icon(name))
 }

@@ -2,10 +2,13 @@
 // src/cartridge/mapper_retro_replay.rs — Retro Replay cartridge
 // =======================================================
 
-use super::constants::{RETRO_REPLAY_NVRAM_MAGIC, RETRO_REPLAY_RAM_BANK_SIZE, RETRO_REPLAY_RAM_SIZE};
+use super::constants::{
+	RETRO_REPLAY_NVRAM_MAGIC, RETRO_REPLAY_RAM_BANK_SIZE, RETRO_REPLAY_RAM_SIZE,
+};
 
-use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};use super::bus_configuration::IoRead;
 use super::bank_storage::BankStorage;
+use super::bus_configuration::IoRead;
+use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
 /* RetroReplayMapper combines banked ROM, RAM, flash-style writes and freezer modes. Several IO regions are only partially decoded, so bus-drive semantics are kept explicit. */
 pub struct RetroReplayMapper {
@@ -63,14 +66,20 @@ impl RetroReplayMapper {
 		(((self.bank & 0x03) as u8) << 3)
 			| (((self.bank & 0x04) as u8) << 5)
 			| if self.allow_bank { 0x02 } else { 0x00 }
-			| if self.freeze_button_pressed { 0x04 } else { 0x00 }
+			| if self.freeze_button_pressed {
+				0x04
+			} else {
+				0x00
+			}
 			| if self.reu_mapping { 0x40 } else { 0x00 }
 	}
 
 	#[inline(always)]
 	fn read_rom_bank(&self, bank: usize, offset: usize) -> Option<u8> {
 		let resolved = self.rom.resolve_bank(bank)?;
-		self.rom.get_bank(resolved).map(|data| data[offset & 0x1fff])
+		self.rom
+			.get_bank(resolved)
+			.map(|data| data[offset & 0x1fff])
 	}
 
 	#[inline(always)]
@@ -168,8 +177,12 @@ impl CartridgeMapper for RetroReplayMapper {
 		match addr {
 			0xde00 | 0xde01 => IoRead::Driven(self.status()),
 			0xde02..=0xde0f if self.clockport_enabled => IoRead::OpenBus,
-			0xde02..=0xdeff if self.reu_mapping => self.io_window_read(addr, true).map_or(IoRead::NotDecoded, IoRead::Driven),
-			0xdf00..=0xdfff if !self.reu_mapping => self.io_window_read(addr, false).map_or(IoRead::NotDecoded, IoRead::Driven),
+			0xde02..=0xdeff if self.reu_mapping => self
+				.io_window_read(addr, true)
+				.map_or(IoRead::NotDecoded, IoRead::Driven),
+			0xdf00..=0xdfff if !self.reu_mapping => self
+				.io_window_read(addr, false)
+				.map_or(IoRead::NotDecoded, IoRead::Driven),
 			_ => IoRead::NotDecoded,
 		}
 	}
@@ -263,24 +276,46 @@ impl CartridgeMapper for RetroReplayMapper {
 			lines.exrom = true;
 		} else {
 			match self.mode {
-				0 => { lines.game = true; lines.exrom = false; }
-				1 => { lines.game = false; lines.exrom = false; }
-				2 => { lines.game = true; lines.exrom = true; }
-				_ => { lines.game = false; lines.exrom = true; }
+				0 => {
+					lines.game = true;
+					lines.exrom = false;
+				}
+				1 => {
+					lines.game = false;
+					lines.exrom = false;
+				}
+				2 => {
+					lines.game = true;
+					lines.exrom = true;
+				}
+				_ => {
+					lines.game = false;
+					lines.exrom = true;
+				}
 			}
 		}
 	}
 
-	fn freeze_keeps_nmi(&self) -> bool { false }
+	fn freeze_keeps_nmi(&self) -> bool {
+		false
+	}
 
-	fn add_chip(&mut self, _chip_type: super::mapper_interface::ChipType, bank: usize, addr: u16, data: &[u8]) {
+	fn add_chip(
+		&mut self,
+		_chip_type: super::mapper_interface::ChipType,
+		bank: usize,
+		addr: u16,
+		data: &[u8],
+	) {
 		self.add_bank(bank, addr, data);
 	}
 
 	fn load_nvram(&mut self, data: &[u8]) {
 		if data.len() == RETRO_REPLAY_RAM_SIZE {
 			self.ram.copy_from_slice(data);
-		} else if data.len() == RETRO_REPLAY_NVRAM_MAGIC.len() + RETRO_REPLAY_RAM_SIZE && &data[..4] == RETRO_REPLAY_NVRAM_MAGIC {
+		} else if data.len() == RETRO_REPLAY_NVRAM_MAGIC.len() + RETRO_REPLAY_RAM_SIZE
+			&& &data[..4] == RETRO_REPLAY_NVRAM_MAGIC
+		{
 			self.ram.copy_from_slice(&data[4..]);
 		}
 	}
@@ -292,8 +327,12 @@ impl CartridgeMapper for RetroReplayMapper {
 		Some(data)
 	}
 
-	fn get_max_bank(&self) -> usize { self.rom.populated_len() }
-	fn get_debug_bank(&self) -> usize { self.bank }
+	fn get_max_bank(&self) -> usize {
+		self.rom.populated_len()
+	}
+	fn get_debug_bank(&self) -> usize {
+		self.bank
+	}
 
 	fn get_info(&self) -> CartridgeInfo {
 		CartridgeInfo {

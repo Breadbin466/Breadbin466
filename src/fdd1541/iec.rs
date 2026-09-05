@@ -3,9 +3,9 @@
 // =======================================================
 
 use super::constants::{
-	IEC_DEVICE_ATN, IEC_DEVICE_ATNA, IEC_DEVICE_ATN_ACK, IEC_DEVICE_CLK,
-	IEC_DEVICE_CONNECTED, IEC_DEVICE_DATA, IEC_DEVICE_SRQ, IEC_DEVICE_STATE, IEC_HOST_ATN,
-	IEC_HOST_CLK, IEC_HOST_DATA, IEC_HOST_PULLS, IEC_HOST_SRQ, IEC_INITIAL_STATE,
+	IEC_DEVICE_ATN, IEC_DEVICE_ATN_ACK, IEC_DEVICE_ATNA, IEC_DEVICE_CLK, IEC_DEVICE_CONNECTED,
+	IEC_DEVICE_DATA, IEC_DEVICE_SRQ, IEC_DEVICE_STATE, IEC_HOST_ATN, IEC_HOST_CLK, IEC_HOST_DATA,
+	IEC_HOST_PULLS, IEC_HOST_SRQ, IEC_INITIAL_STATE,
 };
 use std::cell::Cell;
 
@@ -16,11 +16,7 @@ fn bit(state: u32, mask: u32) -> bool {
 
 #[inline(always)]
 fn with_bit(state: u32, mask: u32, value: bool) -> u32 {
-	if value {
-		state | mask
-	} else {
-		state & !mask
-	}
+	if value { state | mask } else { state & !mask }
 }
 
 #[inline(always)]
@@ -47,7 +43,9 @@ fn ack_pull(state: u32) -> bool {
 
 #[inline(always)]
 fn line_data(state: u32) -> bool {
-	!(bit(state, IEC_HOST_DATA) || (connected(state) && bit(state, IEC_DEVICE_DATA)) || ack_pull(state))
+	!(bit(state, IEC_HOST_DATA)
+		|| (connected(state) && bit(state, IEC_DEVICE_DATA))
+		|| ack_pull(state))
 }
 
 #[inline(always)]
@@ -109,10 +107,12 @@ impl DriveIecBus {
 		self.state.set(new);
 		self.revision.set(self.revision.get().wrapping_add(1));
 		if host {
-			self.host_activity.set(self.host_activity.get().wrapping_add(1));
+			self.host_activity
+				.set(self.host_activity.get().wrapping_add(1));
 		}
 		if device {
-			self.device_activity.set(self.device_activity.get().wrapping_add(1));
+			self.device_activity
+				.set(self.device_activity.get().wrapping_add(1));
 		}
 		self.track(old, new, cycle);
 		true
@@ -120,7 +120,14 @@ impl DriveIecBus {
 
 	#[inline(always)]
 	/* VIA1 outputs are translated into pull-down requests. ATNA participates in the 1541 attention acknowledge circuit rather than acting as an independent IEC wire. */
-	pub fn set_device_lines(&self, clk: bool, data: bool, atna: bool, atna_output: bool, cycle: u64) {
+	pub fn set_device_lines(
+		&self,
+		clk: bool,
+		data: bool,
+		atna: bool,
+		atna_output: bool,
+		cycle: u64,
+	) {
 		let state = self.state.get();
 		if !connected(state) {
 			return;
@@ -160,7 +167,12 @@ impl DriveIecBus {
 	#[inline(always)]
 	pub fn lines(&self) -> (bool, bool, bool, bool) {
 		let state = self.state.get();
-		(line_atn(state), line_clk(state), line_data(state), line_srq(state))
+		(
+			line_atn(state),
+			line_clk(state),
+			line_data(state),
+			line_srq(state),
+		)
 	}
 
 	#[inline(always)]
