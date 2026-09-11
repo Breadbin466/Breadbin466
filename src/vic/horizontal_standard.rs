@@ -64,8 +64,13 @@ pub(super) fn apply_non_mcm_scroll_transition(&mut self, transition: ScrollTrans
 
 		match old_horizontal_scroll {
 			0 => {
-				render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 4, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(4 - old_horizontal_scroll, 3), skip_ref);
-				render_foreground_span(screen, ForegroundCell::new(gfx_data1, 7, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(7 - old_horizontal_scroll, 1), skip_ref);
+				if mode_old.extended_colour_bit() {
+					render_foreground_span(screen, ForegroundCell::new(gfx_data1, 4, char_data1, mode_old, 0, cdod, cycle), PixelSpan::new(4, 1), skip_ref);
+					render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 5, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(5, 3), skip_ref);
+				} else {
+					render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 4, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(4, 3), skip_ref);
+					render_foreground_span(screen, ForegroundCell::new(gfx_data1, 7, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(7, 1), skip_ref);
+				}
 			}
 			1 => {
 				render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 4, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(4 - old_horizontal_scroll, 3), skip_ref);

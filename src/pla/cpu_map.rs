@@ -107,8 +107,16 @@ pub fn select_cpu_write(addr: u16, port: u8, game: bool, exrom: bool) -> CpuWrit
 
 #[inline(always)]
 pub fn map_cpu_read_addr(addr: u16, port: u8, game: bool, exrom: bool) -> MapRegion {
+	map_cpu_read_addr_with_ba(addr, port, game, exrom, true)
+}
+
+/* BA qualifies the PLA read-only I/O product terms even while AEC still gives
+ * the CPU its three warning cycles. Stretched reads therefore cannot clear
+ * peripheral latches. (C64-PLA-DISSECTED-2012, section 2.7, p9-p18) */
+#[inline(always)]
+pub fn map_cpu_read_addr_with_ba(addr: u16, port: u8, game: bool, exrom: bool, ba: bool) -> MapRegion {
 	/* In Ultimax mode the open ranges are represented explicitly rather than falling back to RAM. */
-	if !game && exrom {
+	if !game && exrom && ba {
 		return match addr {
 			0x0000..=0x0FFF => MapRegion::Ram,
 			0x1000..=0x7FFF => MapRegion::Ultimax,
@@ -118,7 +126,9 @@ pub fn map_cpu_read_addr(addr: u16, port: u8, game: bool, exrom: bool) -> MapReg
 			0xE000..=0xFFFF => MapRegion::RomH,
 		};
 	}
-	let out = evaluate(build_cpu_inputs(addr, port, game, exrom, true));
+	let mut inputs = build_cpu_inputs(addr, port, game, exrom, true);
+	inputs.ba = ba;
+	let out = evaluate(inputs);
 
 	if !out.roml_n {
 		return MapRegion::RomL;

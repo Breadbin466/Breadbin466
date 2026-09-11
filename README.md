@@ -84,7 +84,28 @@ Bug reports are most useful when they include:
 - relevant screenshots, debugger output or traces;
 - whether the issue also occurs without optional hardware such as a cartridge or REU.
 
+## Licence
+
+Breadbin466 is licensed under the MIT License. See [`LICENSE`](LICENSE).
+
+The Commodore ROM images distributed with Breadbin466 are not covered by the MIT License. See [`ROM-LICENSE`](ROM-LICENSE).
+
 ## Changelog
+
+### 0.12.1
+
+Version 0.12.1 focuses on hardware-accuracy fixes and introduces an explicit licence for Breadbin466.
+
+- Breadbin466 is now released under the permissive **MIT License**. The Commodore ROM images distributed with Breadbin466 are not covered by the MIT License and retain their separate copyright status.
+- Fixed numerous 6510 edge cases, including decimal arithmetic, interrupt/RDY timing, undocumented instructions and the 6510 I/O port.
+- Improved CIA 6526 accuracy, including timers, interrupts, TOD clock and serial behaviour.
+- Fixed several VIC-II timing and rendering edge cases and added light-pen emulation.
+- Improved SID oscillator, noise, waveform and envelope behaviour based on hardware measurements.
+- Improved 1541/VIA accuracy, including memory decoding, open-bus behaviour, mechanics, rotation, GCR and read-channel timing.
+- Made C64/1541 IEC worker synchronisation more robust while retaining parallel drive execution and warp-mode performance.
+- Improved REU DMA timing and register behaviour.
+- Improved cartridge compatibility, including Retro Replay hardware variants.
+- Added various smaller correctness and robustness fixes throughout the emulator.
 
 ### 0.12.0
 

@@ -36,8 +36,8 @@ pub(crate) const COMMAND_TRANSFER_TYPE_MASK: u8 = 0x03;
 pub(crate) const COMMAND_FF00_DISABLE: u8 = 0x10;
 pub(crate) const COMMAND_AUTOLOAD: u8 = 0x20;
 pub(crate) const COMMAND_EXECUTE: u8 = 0x80;
-pub(crate) const COMMAND_WRITABLE_MASK: u8 = 0xB3;
-pub(crate) const COMMAND_COMPLETION_MASK: u8 = 0x33;
+pub(crate) const COMMAND_WRITABLE_MASK: u8 = 0xFF;
+pub(crate) const COMMAND_COMPLETION_MASK: u8 = 0x7F;
 
 pub(crate) const INTERRUPT_VERIFY_ENABLE: u8 = 0x20;
 pub(crate) const INTERRUPT_END_OF_BLOCK_ENABLE: u8 = 0x40;

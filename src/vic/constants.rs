@@ -23,10 +23,11 @@ pub const BORDERCOLORINDEX: u8 = 0x8E;
 pub const VIC_BLACK: u8        = 0x00;
 
 /* The low four IRQ bits are the VIC source latches; bit 7 reports whether any enabled source currently asserts IRQ. */
-/* Source bits preserve the VIC-II register order: raster compare, sprite/background collision, and sprite/sprite collision. */
+/* Source bits preserve the VIC-II register order: raster compare, sprite/background collision, sprite/sprite collision, and light pen. */
 pub const IRQ_RASTER: u8   = 0x01;
 pub const IRQ_MBC: u8      = 0x02;
 pub const IRQ_MMC: u8      = 0x04;
+pub const IRQ_LIGHT_PEN: u8 = 0x08;
 pub const IRQ_STATUS: u8   = 0x80;
 /* Breadbin466 uses one fixed RGB palette for the reference PAL machine. These presentation values do not participate in VIC timing or colour-source selection. */
 pub const VIC_PALETTE: [[u8; 3]; 16] = [
@@ -56,7 +57,8 @@ pub(crate) const STD_PIXEL_MASKS: [u64; 256] = build_std_pixel_masks();
 /* Renderer buffers include guard pixels/cycles because horizontal scrolling, sprites and border transitions can write slightly outside the nominal 504-pixel line. */
 pub(crate) const CLOCK_SYNC_BAND: i64 = 5 * 60 * 1_000_000;
 pub(crate) const SPRITE_PIXEL_OFFSET: i32 = 4;
-pub(crate) const LINE_BUF_LEN: usize = 504 + 16;
+/* The output crop starts after DISPLAY_START pixels and must retain a complete raster width. */
+pub(crate) const LINE_BUF_LEN: usize = DISPLAY_START + TOTAL_WIDTH;
 pub(crate) const MASK_BUF_LEN: usize = 504 / 8 + 16;
 pub(crate) const BORDER_BITS_LEN: usize = LINE_BUF_LEN.div_ceil(8);
 pub(crate) const FRAMEBUFFER_SIZE: usize = TOTAL_WIDTH * TOTAL_HEIGHT * 3;

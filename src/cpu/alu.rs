@@ -14,7 +14,7 @@ impl Cpu {
 		self.p = (self.p & !(Z_FLAG | N_FLAG)) | (is_zero << 1) | (value & N_FLAG);
 	}
 
-	/* Decimal ADC corrects each packed-decimal digit while overflow still reflects signed binary addition. */
+	/* Decimal ADC feeds the corrected low-digit carry into the high-digit sum before N and V are latched; the final high-digit correction changes only A and C (VISUAL6502-DECIMAL, Tests for ADC). */
 	pub fn alu_adc(&mut self, value: u8) {
 		let a = self.a;
 		let m = value;
@@ -31,7 +31,7 @@ impl Cpu {
 			} else {
 				(tmp & 0x0f) + (a & 0xf0) as u32 + (m & 0xf0) as u32 + 0x10
 			};
-			/* NMOS Z and V are derived from the uncorrected binary sum, while N follows the intermediate decimal-adjusted high digit. */
+			/* NMOS Z follows the uncorrected binary sum. N and V follow the high-digit sum including the decimal carry from the low digit, before the high digit is corrected. */
 			let bin = (a as u32) + (m as u32) + c;
 			self.p &= !(Z_FLAG | N_FLAG | V_FLAG | C_FLAG);
 			if (bin & 0xff) == 0 {
@@ -40,7 +40,7 @@ impl Cpu {
 			if (tmp & 0x80) != 0 {
 				self.p |= N_FLAG;
 			}
-			if ((a as u32 ^ bin) & 0x80 != 0) && ((a as u32 ^ m as u32) & 0x80 == 0) {
+			if ((a as u32 ^ tmp) & 0x80 != 0) && ((a as u32 ^ m as u32) & 0x80 == 0) {
 				self.p |= V_FLAG;
 			}
 			/* A high digit above nine receives the corresponding +6 correction. Carry is set when the corrected packed-decimal result exceeds two digits. */

@@ -18,6 +18,7 @@ pub struct TimeOfDay {
 	pub alarm: u32,
 	pub current_val: u32,
 	pub divider: u8,
+	pub alarm_matched: bool,
 }
 
 impl TimeOfDay {
@@ -29,37 +30,60 @@ impl TimeOfDay {
 			return false;
 		}
 		self.divider += 1;
-		if self.divider < ticks_per_tenth {
+		if self.divider != ticks_per_tenth {
+			/* The mains divider wraps at six even when the selected terminal
+			 * count is five (CIA-TOD-MEASUREMENTS, hzsync6). */
+			if self.divider == 6 {
+				self.divider = 0;
+			}
 			return false;
 		}
 		self.divider = 0;
-		self.tenths += 1;
-		if self.tenths >= 10 {
+		if self.tenths == 9 {
 			self.tenths = 0;
-			self.seconds = Self::bcd_increment(self.seconds, 0x59);
-			if self.seconds == 0x00 {
-				self.minutes = Self::bcd_increment(self.minutes, 0x59);
-				if self.minutes == 0x00 {
+			let (seconds, carry) = Self::bcd_increment(self.seconds);
+			self.seconds = seconds;
+			if carry {
+				let (minutes, carry) = Self::bcd_increment(self.minutes);
+				self.minutes = minutes;
+				if carry {
 					self.increment_hours();
 				}
 			}
+		} else {
+			self.tenths = (self.tenths + 1) & 0x0F;
 		}
 		self.pack_current();
-		self.current_val == self.alarm
+		self.compare_alarm()
 	}
 
 	#[inline(always)]
-	/* Decimal carry is performed nibble by nibble because TOD registers expose packed BCD rather than binary counters. */
-	fn bcd_increment(val: u8, wrap_at: u8) -> u8 {
-		let mut lo = val & 0x0F;
-		let mut hi = val >> 4;
-		lo += 1;
-		if lo > 9 {
-			lo = 0;
-			hi += 1;
+	/* Only entry into equality raises the alarm; acknowledging ICR does not
+	 * re-arm a comparison that remains equal (CIA-TOD-MEASUREMENTS, 4tod and 5tod). */
+	pub fn compare_alarm(&mut self) -> bool {
+		let matched = self.current_val == self.alarm;
+		let rising = matched && !self.alarm_matched;
+		self.alarm_matched = matched;
+		rising
+	}
+
+	#[inline(always)]
+	/* Each digit is a binary counter with an equality detector at its decimal
+	 * terminal value. Invalid digits count through the remaining binary states;
+	 * binary wrap alone does not propagate a decimal carry. Seconds and minutes
+	 * have a four-bit units counter and a three-bit tens counter
+	 * (CIA-TOD-MEASUREMENTS, fix-sec and fix-min). */
+	fn bcd_increment(val: u8) -> (u8, bool) {
+		let lo = val & 0x0F;
+		let hi = val >> 4;
+		if lo != 9 {
+			return ((hi << 4) | ((lo + 1) & 0x0F), false);
 		}
-		let new_val = (hi << 4) | lo;
-		if new_val > wrap_at { 0x00 } else { new_val }
+		if hi == 5 {
+			(0, true)
+		} else {
+			(((hi + 1) & 7) << 4, false)
+		}
 	}
 
 	#[inline(always)]
@@ -68,21 +92,14 @@ impl TimeOfDay {
 	fn increment_hours(&mut self) {
 		let pm_bit = self.hours & 0x80;
 		let h_bcd = self.hours & 0x1F;
-		let mut lo = h_bcd & 0x0F;
-		let mut hi = h_bcd >> 4;
-		lo += 1;
-		if lo > 9 {
-			lo = 0;
-			hi += 1;
-		}
-		let h_bcd = (hi << 4) | lo;
-		self.hours = if h_bcd == 0x12 {
-			(pm_bit ^ 0x80) | 0x12
-		} else if h_bcd == 0x13 {
-			pm_bit | 0x01
-		} else {
-			pm_bit | h_bcd
+		/* Only hour 09 carries into the high digit. Invalid low digits wrap
+		 * independently, including 19 to 1A (CIA-TOD-MEASUREMENTS, fix-hour). */
+		let next = match h_bcd {
+			0x09 => 0x10,
+			0x12 => 0x01,
+			_ => (h_bcd & 0x10) | ((h_bcd + 1) & 0x0F),
 		};
+		self.hours = (if h_bcd == 0x11 { pm_bit ^ 0x80 } else { pm_bit }) | next;
 	}
 
 	#[inline(always)]
@@ -97,6 +114,10 @@ impl TimeOfDay {
 	/* Reading the hours register freezes a coherent TOD snapshot until the tenths register is read (MOS-6526-1981, Time of Day Clock). */
 	/* The four TOD fields are copied together so subsequent reads see one coherent timestamp even if the live clock advances between register accesses. */
 	pub fn latch(&mut self) {
+		/* Further hour reads retain the first snapshot until tenths release it. */
+		if self.latched {
+			return;
+		}
 		self.latched = true;
 		self.latch_tenths = self.tenths;
 		self.latch_seconds = self.seconds;

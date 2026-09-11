@@ -64,12 +64,13 @@ pub struct VicII {
 	pub forced_badline_c_access_clock: i64,
 	pub current_clock:                     i64,
 
-	pub cpu_next_op_code:      u8,
+	pub(super) pending_character_access: Option<usize>,
 
 	/* Light-pen coordinates are frame-scoped latches. Once triggered, subsequent edges in the same frame are ignored until the frame boundary rearms the capture path. */
 	pub light_pen_x:           u8,
 	pub light_pen_y:           u8,
 	pub light_pen_triggered:   bool,
+	pub(super) light_pen_pin_high: bool,
 }
 
 impl VicII {
@@ -100,11 +101,12 @@ impl VicII {
 			forced_badline_c_access_clock: -40,
 			current_clock: 0,
 
-			cpu_next_op_code: 0,
+			pending_character_access: None,
 
 			light_pen_x:           0,
 			light_pen_y:           0,
 			light_pen_triggered:   false,
+			light_pen_pin_high: true,
 		}
 	}
 
@@ -133,11 +135,12 @@ impl VicII {
 		self.forced_badline_c_access_clock = -40;
 		self.current_clock = 0;
 
-		self.cpu_next_op_code = 0;
+		self.pending_character_access = None;
 
 		self.light_pen_x           = 0;
 		self.light_pen_y           = 0;
 		self.light_pen_triggered   = false;
+		self.light_pen_pin_high = true;
 	}
 
 	/* The renderer owns a stable RGB framebuffer whose storage survives reset; callers borrow it without gaining access to VIC pipeline state. */

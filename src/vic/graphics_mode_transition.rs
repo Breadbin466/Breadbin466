@@ -50,6 +50,19 @@ impl VicII {
 		let skip_ref = &mut self.pixels_to_skip;
 		let screen   = &mut self.screen;
 
+		/* Colour selection changes within the cell already being shifted. Rising
+		 * mode bits reach the final half-cell before falling bits have drained. */
+		for dot in 4u8..8 {
+			let source_dot = dot as i8 - old_horizontal_scroll as i8;
+			let (graphics, character, source_dot) = if source_dot < 0 {
+				(self.graphics_data_pipeline_2, self.char_data_pipeline_2, (source_dot + 8) as u8)
+			} else { (gfx_data1, char_data1, source_dot as u8) };
+			let falling_illegal = mode_old.extended_colour_bit() && mode_old.bitmap_bit() && !mode_new.bitmap_bit() && !mcm && ((graphics & (0x80 >> source_dot)) != 0 || (mode_new.extended_colour_bit() && character & 0xC0 != 0));
+			let falling_multicolour_bitmap = mode_old.bitmap_bit() && !mode_new.bitmap_bit() && mcm;
+			let mode = if dot < if falling_illegal || falling_multicolour_bitmap { 5 } else { 6 } { GraphicsMode::from_code(mode_old.code() | mode_new.code()) } else { mode_new };
+			render_foreground_span(screen, ForegroundCell::new(graphics, dot as i8, character, mode, 0, cdod, cycle), PixelSpan::new(source_dot, 1), skip_ref);
+		}
+
 		match case_sel {
 			0 | 5 | 10 | 15 => {}
 			1 | 3 | 11 => {
@@ -63,33 +76,41 @@ impl VicII {
 			}
 			4 | 6 | 14 => {
 				if old_horizontal_scroll == 0 {
-					render_foreground_span(screen, ForegroundCell::new(gfx_data2, 0, char_data2, GraphicsMode::from_code(mode_new.code() | 2), 0, cdod, cycle + 1), PixelSpan::new(0, 1), skip_ref);
+					render_foreground_span(screen, ForegroundCell::new(gfx_data2, 0, char_data2, mode_new, 0, cdod, cycle + 1), PixelSpan::new(0, 1), skip_ref);
 					render_foreground_span(screen, ForegroundCell::new(gfx_data2_t, 1, char_data2, mode_new, force_single_2 as u8, cdod, cycle + 1), PixelSpan::new(1, 7), skip_ref);
 					*skip_ref = 8;
 				} else {
-					render_foreground_span(screen, ForegroundCell::new(gfx_data1, 0, char_data1, GraphicsMode::from_code(mode_new.code() | 2), 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll, 1), skip_ref);
+					render_foreground_span(screen, ForegroundCell::new(gfx_data1, 0, char_data1, mode_new, 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll, 1), skip_ref);
 					render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 1, char_data1, mode_new, 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll + 1, old_horizontal_scroll - 1), skip_ref);
 					render_foreground_span(screen, ForegroundCell::new(gfx_data2_t, old_horizontal_scroll as i8, char_data2, mode_new, force_single_2 as u8, cdod, cycle + 1), PixelSpan::new(0, 8), skip_ref);
 					*skip_ref = 8;
 				}
 			}
 			8 | 13 => {
-				if old_horizontal_scroll == 0 {
-					render_foreground_span(screen, ForegroundCell::new(gfx_data2, 0, char_data2, GraphicsMode::from_code(mode_new.code() | 4), 0, cdod, cycle + 1), PixelSpan::new(0, 1), skip_ref);
+				if case_sel == 13 && mcm {
+					/* The measured illegal-to-multicolour-bitmap transition retains
+					 * the high bit of the final pair for its second dot. This is a
+					 * diagnostic-derived model of the transient pair latch. */
+					let last_pair = (gfx_data2 & 0xFE) | ((gfx_data2 >> 1) & 1);
+					render_foreground_span(screen, ForegroundCell::new(gfx_data1, 0, char_data1, mode_new, 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll, old_horizontal_scroll), skip_ref);
+					render_foreground_span(screen, ForegroundCell::new(last_pair, old_horizontal_scroll as i8, char_data2, mode_new, 0, cdod, cycle + 1), PixelSpan::new(0, 8), skip_ref);
+					*skip_ref = 8;
+				} else if old_horizontal_scroll == 0 {
+					render_foreground_span(screen, ForegroundCell::new(gfx_data2, 0, char_data2, mode_new, 0, cdod, cycle + 1), PixelSpan::new(0, 1), skip_ref);
 					*skip_ref = 1;
 				} else {
-					render_foreground_span(screen, ForegroundCell::new(gfx_data1, 0, char_data1, GraphicsMode::from_code(mode_new.code() | 4), 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll, 1), skip_ref);
+					render_foreground_span(screen, ForegroundCell::new(gfx_data1, 0, char_data1, mode_new, 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll, 1), skip_ref);
 					render_foreground_span(screen, ForegroundCell::new(gfx_data1, 1, char_data1, mode_new, 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll + 1, old_horizontal_scroll - 1), skip_ref);
 					*skip_ref = 0;
 				}
 			}
 			9 => {
 				if old_horizontal_scroll == 0 {
-					render_foreground_span(screen, ForegroundCell::new(gfx_data2_t, 0, char_data2, GraphicsMode::from_code(mode_new.code() | 4), 0, cdod, cycle + 1), PixelSpan::new(0, 1), skip_ref);
+					render_foreground_span(screen, ForegroundCell::new(gfx_data2_t, 0, char_data2, mode_new, 0, cdod, cycle + 1), PixelSpan::new(0, 1), skip_ref);
 					render_foreground_span(screen, ForegroundCell::new(gfx_data2_t, 1, char_data2, mode_new, force_single_2 as u8, cdod, cycle + 1), PixelSpan::new(1, 7), skip_ref);
 					*skip_ref = 8;
 				} else {
-					render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 0, char_data1, GraphicsMode::from_code(mode_new.code() | 4), 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll, 1), skip_ref);
+					render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 0, char_data1, mode_new, 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll, 1), skip_ref);
 					render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 1, char_data1, mode_new, 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll + 1, old_horizontal_scroll - 1), skip_ref);
 					render_foreground_span(screen, ForegroundCell::new(gfx_data2_t, old_horizontal_scroll as i8, char_data2, mode_new, force_single_2 as u8, cdod, cycle + 1), PixelSpan::new(0, 8), skip_ref);
 					*skip_ref = 8;
@@ -97,11 +118,11 @@ impl VicII {
 			}
 			12 => {
 				if old_horizontal_scroll == 0 {
-					render_foreground_span(screen, ForegroundCell::new(gfx_data2, 0, char_data2, GraphicsMode::from_code(mode_new.code() | 6), 0, cdod, cycle + 1), PixelSpan::new(0, 1), skip_ref);
+					render_foreground_span(screen, ForegroundCell::new(gfx_data2, 0, char_data2, mode_new, 0, cdod, cycle + 1), PixelSpan::new(0, 1), skip_ref);
 					render_foreground_span(screen, ForegroundCell::new(gfx_data2_t, 1, char_data2, mode_new, force_single_2 as u8, cdod, cycle + 1), PixelSpan::new(1, 7), skip_ref);
 					*skip_ref = 8;
 				} else {
-					render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 0, char_data1, GraphicsMode::from_code(mode_new.code() | 6), 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll, 1), skip_ref);
+					render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 0, char_data1, mode_new, 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll, 1), skip_ref);
 					render_foreground_span(screen, ForegroundCell::new(gfx_data1_t, 1, char_data1, mode_new, 0, cdod, cycle + 1), PixelSpan::new(8 - old_horizontal_scroll + 1, old_horizontal_scroll - 1), skip_ref);
 					render_foreground_span(screen, ForegroundCell::new(gfx_data2_t, old_horizontal_scroll as i8, char_data2, mode_new, force_single_2 as u8, cdod, cycle + 1), PixelSpan::new(0, 8), skip_ref);
 					*skip_ref = 8;

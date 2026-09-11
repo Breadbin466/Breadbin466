@@ -58,12 +58,14 @@ pub struct DiskMechanism {
 	pub(super) prev_phase: u8,
 	pub(super) phase_output: u8,
 	pub(super) motor_latched: bool,
+	pub(super) head_settling_cycles: u32,
 
 	/* Decoder state follows the serial bit stream continuously; byte-ready is produced only after eight qualified bit cells. */
 	pub(super) byte_pos: usize,
 	pub(super) bit_pos: u8,
 	pub(super) rotation_numerator: u64,
 	pub(super) phase_track_length: usize,
+	pub(super) position_track_length: usize,
 	pub(super) phase_track_variable_speed: bool,
 	pub(super) bit_cell_divider: u8,
 	pub(super) decoder_phase: u8,
@@ -110,10 +112,12 @@ impl DiskMechanism {
 			prev_phase: 0,
 			phase_output: 0,
 			motor_latched: false,
+			head_settling_cycles: 0,
 			byte_pos: 0,
 			bit_pos: 0,
 			rotation_numerator: 0,
 			phase_track_length: 0,
+			position_track_length: 0,
 			phase_track_variable_speed: false,
 			bit_cell_divider: 3,
 			decoder_phase: 0,
@@ -135,9 +139,11 @@ impl DiskMechanism {
 		self.prev_phase = previous.prev_phase;
 		self.phase_output = previous.phase_output;
 		self.motor_latched = previous.motor_latched;
+		self.head_settling_cycles = previous.head_settling_cycles;
 		self.byte_pos = previous.byte_pos;
 		self.bit_pos = previous.bit_pos;
 		self.rotation_numerator = previous.rotation_numerator;
+		self.position_track_length = previous.position_track_length;
 		self.bit_cell_divider = previous.bit_cell_divider;
 		self.decoder_phase = previous.decoder_phase;
 		self.byte_bit_count = previous.byte_bit_count;
@@ -228,6 +234,7 @@ impl DiskMechanism {
 		self.prev_phase = 0;
 		self.phase_output = 0;
 		self.motor_latched = false;
+		self.head_settling_cycles = 0;
 		self.disk_change_cycles = DISK_CHANGE_CYCLES;
 		self.reset_decoder();
 	}
@@ -278,13 +285,7 @@ impl DiskMechanism {
 			self.disk_change_cycles -= 1;
 		}
 
-		if phase != self.phase_output {
-			self.phase_output = phase;
-			if self.motor_latched {
-				self.update_stepper(phase);
-			}
-		}
-		self.motor_latched = motor;
+		self.clock_stepper(motor, phase);
 
 		if self.disk_change_cycles > 0 {
 			self.sync_active = false;
@@ -319,7 +320,7 @@ impl DiskMechanism {
 
 		let effective_write_mode = requested_write_mode
 			&& (!self.tracks[track_index].is_empty()
-				|| self.initialise_empty_g64_track(track_index, selected_density));
+				|| self.initialise_empty_track(track_index, selected_density));
 		if effective_write_mode != self.was_writing {
 			self.sync_active = false;
 			self.rotation_numerator = 0;

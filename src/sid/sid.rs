@@ -80,28 +80,6 @@ impl Mos6581 {
 		envelope_1.clock();
 		envelope_2.clock();
 
-		/* Muted rendering still performs the sync ring after phase advancement. Skipping only waveform conversion and analogue processing avoids desynchronising the voices from the emulated machine clock. */
-		if !self.rendering_enabled {
-			let rising_0 = oscillator_0.msb_rising;
-			let rising_1 = oscillator_1.msb_rising;
-			let rising_2 = oscillator_2.msb_rising;
-			let sync_0 = oscillator_0.sync_enabled;
-			let sync_1 = oscillator_1.sync_enabled;
-			let sync_2 = oscillator_2.sync_enabled;
-
-			/* A synchronised oscillator resets when its modulator raises accumulator bit 23. The guard suppresses the reset in the mutual-sync corner where the modulator is itself being synchronised in the same ring step. */
-			if rising_0 && sync_1 && !(sync_0 && rising_2) {
-				oscillator_1.synchronise();
-			}
-			if rising_1 && sync_2 && !(sync_1 && rising_0) {
-				oscillator_2.synchronise();
-			}
-			if rising_2 && sync_0 && !(sync_2 && rising_1) {
-				oscillator_0.synchronise();
-			}
-			return None;
-		}
-
 		/* Voice evaluation follows the physical modulation ring: voice 3 modulates voice 1, voice 1 modulates voice 2, and voice 2 modulates voice 3. The newly evaluated code is also fed back into combined-waveform and noise-line state before being latched for reads. */
 		let waveform_0 = oscillator_0.evaluate_output(oscillator_2.accumulator, &self.waveforms);
 		oscillator_0.apply_combined_feedback(waveform_0);
@@ -130,6 +108,12 @@ impl Mos6581 {
 		}
 		if rising_2 && sync_0 && !(sync_2 && rising_1) {
 			oscillator_0.synchronise();
+		}
+
+		/* Host muting suppresses only analogue rendering. Waveform feedback
+		 * and readable OSC3 state remain clocked with the machine. */
+		if !self.rendering_enabled {
+			return None;
 		}
 
 		let level_0 = envelope_0.volume;

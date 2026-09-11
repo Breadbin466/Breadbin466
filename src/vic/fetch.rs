@@ -25,16 +25,23 @@ impl VicII {
 	}
 
 	#[inline(always)]
-	/* Idle display cycles use the documented idle address for normal modes and $39FF for illegal mode combinations. EnterDisplayAfterCharacterAccess is consumed here so a late badline begins only after the pending idle fetch. */
+	/* Idle display cycles use the normal idle address or $39FF in extended modes.
+	 * 6569R5 DMA-delay measurements identify $38FF for the pending idle fetch.
+	 * Keeping the initial display-fetch slots separate is a model inferred from
+	 * the colour-fetch diagnostics, rather than a published circuit description. */
 	fn read_idle_graphics(&mut self, memory: &mut Memory, bank: u8, cycle: u64) -> u8 {
 		if !self.border.char_data_output_disabled {
 			self.char_data_fetched = 0;
 		}
-		let address = match self.previous_graphics_mode.code() {
+		let mut address = match self.previous_graphics_mode.code() {
 			0..=3 => IDLE_ACCESS_ADDRESS,
 			_ => 0x39FF,
 		};
+
 		if self.display_transition == DisplayTransition::EnterDisplayAfterCharacterAccess {
+			if self.timing.cycle >= 18 && self.current_clock == self.forced_badline_c_access_clock {
+				address = 0x38FF;
+			}
 			self.display_transition = DisplayTransition::Stable;
 		}
 		vic_read(memory, address, bank, cycle)
@@ -93,7 +100,9 @@ impl VicII {
 		let character_data = self.char_data_fetched;
 		let character_base = self.regs.cb_base();
 		let row = self.rc as u16;
-		let address = match self.previous_graphics_mode.code() {
+		/* The next PHI1 address uses the live mode bits. The delayed mode latch
+		 * belongs to idle selection, not the active graphics address multiplexer. */
+		let address = match self.graphics_mode.code() {
 			0 | 1 => character_base
 				| ((character_data & 0x00FF) << 3)
 				| row,
@@ -107,6 +116,21 @@ impl VicII {
 				| ((self.vc & 0x033F) << 3)
 				| row,
 		};
+		/* The first fetch after BMM falls still carries the bitmap counter
+		 * through the address multiplexer while the character route opens. */
+		let address = if self.previous_graphics_mode.bitmap_bit() && !self.graphics_mode.bitmap_bit() {
+			if matches!(crate::pla::map_vic_addr(address, bank as usize, memory.cartridge.configuration.phi1_mode), crate::memory::constants::MapRegion::Char) {
+				(address & 0x3F00) | (((self.vc << 3) | row) & 0x00FF)
+			} else {
+				(character_base & 0x2000) | (self.vc << 3) | row
+			}
+		} else { address };
+		/* The ECM address mask survives into the first bitmap or character-ROM
+		 * fetch. This transition model is inferred from the mode-split diagnostics. */
+		let address = if self.previous_graphics_mode.extended_colour_bit() && !self.graphics_mode.extended_colour_bit()
+			&& (self.graphics_mode.bitmap_bit() && (!self.previous_graphics_mode.bitmap_bit() || self.graphics_mode.multicolour_bit()) || matches!(crate::pla::map_vic_addr(address, bank as usize, memory.cartridge.configuration.phi1_mode), crate::memory::constants::MapRegion::Char)) {
+			(address & !0x0600) | if self.graphics_mode.bitmap_bit() { 0 } else { character_base & 0x0600 }
+		} else { address };
 		vic_read(memory, address, bank, cycle)
 	}
 }

@@ -8,7 +8,7 @@ use super::thread::DriveWorker;
 use super::thread::{Request, Response};
 
 impl DriveWorker {
-	/* Tight IEC activity temporarily moves the complete drive object to the host thread. The transfer is accepted only at the exact completed cycle so neither thread can execute the same emulated interval. */
+	/* Cycle-synchronous execution moves the complete drive object to the host thread. The transfer is accepted only at the exact completed cycle so neither thread can execute the same emulated interval. */
 	pub(super) fn take_ownership(&mut self, completed_cycle: u64) {
 		if self.local_drive.is_some() {
 			return;

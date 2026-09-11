@@ -10,16 +10,37 @@ pub struct RAMController {
 }
 
 impl RAMController {
-	/* Normal construction starts from cleared RAM. This provides a stable cold-start state without inventing cache flags or other software-visible data. */
+/* Normal construction uses the deterministic power-on pattern so tests and resets never depend on host allocator contents. */
 	pub fn new() -> Self {
-		Self {
-			data: Box::new([0u8; RAM_SIZE]),
-		}
+		Self::new_with_deterministic_power_on_pattern(0xDEADBEEF)
 	}
 
-	/* Clear restores the defined cold-start RAM state. */
+	/* Real DRAM powers up in a board- and chip-dependent pattern. A deterministic pseudo-pattern preserves non-zero startup behaviour while keeping emulator runs reproducible. */
+	pub fn new_with_deterministic_power_on_pattern(seed: u32) -> Self {
+		let mut data = Box::new([0u8; RAM_SIZE]);
+		let mut rng = seed;
+		for addr in 0..RAM_SIZE {
+			let col = addr & 0xFF;
+			let row = (addr >> 8) & 0xFF;
+			rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+			let col_bias = ((col as u32) * 73) & 0xFF;
+			let row_val = ((rng >> 8) ^ row as u32) & 0xFF;
+			let combined = (col_bias ^ row_val ^ (rng >> 16)) as u8;
+			let value = if (rng & 0x03) == 0 {
+				combined & 0x0F
+			} else if (rng & 0x03) == 1 {
+				combined | 0xF0
+			} else {
+				combined
+			};
+			data[addr] = value;
+		}
+		Self { data }
+	}
+
+/* A cold reset restores the same reproducible power-on pattern as construction. */
 	pub fn clear(&mut self) {
-		self.data.fill(0x00);
+		self.data = Self::new().data;
 	}
 
 	#[inline(always)]

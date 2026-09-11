@@ -1,0 +1,18 @@
+# Commodore ROM Images
+
+The ROM images distributed in the `roms/` directory are provided for compatibility and convenience with Breadbin466.
+
+They are **not part of Breadbin466's MIT-licensed source code** and are **not licensed under the MIT License**.
+
+This applies to the following files:
+
+- `characters_901225-01.bin`
+- `basic_901226-01.bin`
+- `kernal_901227-03.bin`
+- `dos1541-325302-01+901229-05.bin`
+
+All rights in these ROM images remain with their respective copyright holders.
+
+The inclusion of these files in a Breadbin466 distribution does not grant any rights to them under the Breadbin466 MIT License.
+
+The MIT License in the repository root applies to Breadbin466 itself and does not supersede or alter any copyright, licence, or other rights applicable to these ROM images.

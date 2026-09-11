@@ -157,17 +157,19 @@ pub fn build_track_with_errors(
 			encoded.extend_from_slice(&[0x55; 9]);
 		}
 
-		if error != 0x04 {
-			encoded.extend_from_slice(&[0xFF; 5]);
-			let mut block = [0u8; 260];
-			block[0] = 0x07;
-			block[1..257].copy_from_slice(source);
-			block[257] = source.iter().fold(0u8, |checksum, byte| checksum ^ byte);
-			if error == 0x05 {
-				block[257] ^= 0xFF;
-			}
-			append_gcr(&mut encoded, &block);
+		/* A missing data-block marker corrupts the identifier, not the
+		sector payload. Retaining the encoded payload lets raw readers
+		observe the bytes independently of DOS recognising the block.
+		(D64-SCANNER-DIAGNOSTICS) */
+		encoded.extend_from_slice(&[0xFF; 5]);
+		let mut block = [0u8; 260];
+		block[0] = if error == 0x04 { 0x00 } else { 0x07 };
+		block[1..257].copy_from_slice(source);
+		block[257] = source.iter().fold(0u8, |checksum, byte| checksum ^ byte);
+		if error == 0x05 {
+			block[257] ^= 0xFF;
 		}
+		append_gcr(&mut encoded, &block);
 
 		encoded.resize(sector_size, 0x55);
 		encoded.truncate(sector_size);

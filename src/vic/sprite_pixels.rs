@@ -58,11 +58,17 @@ impl Sprite {
 					if mc_this_pixel || self.multicolour_flip {
 						self.multicolour_flip = !self.multicolour_flip;
 						if self.multicolour_flip {
-							let bits = ((self.data_buffer & 0xC00000) >> 22) as u8;
+							/* At a hires-to-multicolour transition, the first symbol
+							 * retains the single-bit input; its second bit is not yet latched. */
+							let mask = if pixels_left == 6 && flags.mc_changed_now && !flags.mc_prev { 0x800000 } else { 0xC00000 };
+							let bits = ((self.data_buffer & mask) >> 22) as u8;
 							self.pending_pixel_colour = match bits {
 								0 => 0x00, 1 => colour1, 2 => colour2, 3 => colour3, _ => 0x00,
 							};
 						}
+					} else if pixels_left == 6 && flags.mc_changed_now && flags.mc_prev {
+						/* The output latch retains the last multicolour value for
+						 * the transition dot and its horizontal expansion repeat. */
 					} else if (self.data_buffer & 0x800000) != 0 {
 						self.pending_pixel_colour = colour2;
 					} else {

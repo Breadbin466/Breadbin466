@@ -211,6 +211,14 @@ impl IecBus {
 		)
 	}
 
+	/* Resolve a completed device boundary against the current host outputs
+	without publishing artificial transitions on the live cable. */
+	pub(crate) fn input_lines_for_device(&self, device: u32) -> (bool, bool) {
+		let current = self.load();
+		let state = if connected(current) { (current & !DEVICE_STATE) | (device & DEVICE_STATE) } else { current };
+		(line_clk(state), line_data(state))
+	}
+
 	pub fn last_atn_transition(&self) -> u64 {
 		self.last_atn_transition.get()
 	}

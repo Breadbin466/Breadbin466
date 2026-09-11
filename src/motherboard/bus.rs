@@ -54,11 +54,42 @@ pub struct CpuBus<'a, const CAPTURE_ACCESS: bool> {
 	pub memory: &'a mut Memory,
 	pub vic: &'a mut VicII,
 	pub debug_access: &'a mut Option<DebugBusAccess>,
+	drive_worker: &'a mut DriveWorker,
+	iec: &'a IecBus,
+	drive_enabled: bool,
+	last_drive_device_state: &'a mut u32,
+}
+
+/* DMA pulls both RDY and AEC low. Internal write cycles still complete,
+ * but the disconnected CPU cannot place their writes on the external bus. */
+struct DmaDisconnectedBus;
+
+impl SystemBus for DmaDisconnectedBus {
+	fn address_enabled(&self) -> bool { false }
+	fn read(&mut self, _addr: u16, _cycle: u64) -> u8 { 0xFF }
+	fn write(&mut self, _addr: u16, _value: u8, _cycle: u64) {}
 }
 
 impl<const CAPTURE_ACCESS: bool> SystemBus for CpuBus<'_, CAPTURE_ACCESS> {
+	fn address_enabled(&self) -> bool { !self.vic.aec_low }
+
+	/* The 6510 does not drive its internal port value onto the data bus.
+	 * DRAM instead captures the byte retained from the preceding VIC phase
+	 * (CPU-PORT-RAM-MEASUREMENTS). */
+	fn write_port(&mut self, addr: u16, cycle: u64) {
+		let value = self.memory.bus_state.latched_value();
+		self.write(addr, value, cycle);
+	}
+
 	#[inline(always)]
 	fn read(&mut self, addr: u16, cycle: u64) -> u8 {
+		if self.drive_enabled && addr & 0xFF0F == 0xDD00 {
+			let (previous, current) = self.drive_worker.synchronise_input(cycle);
+			let (clk, data) = self.iec.input_lines_for_device(previous);
+			self.memory.cia2.update_iec_inputs(clk, data);
+			self.iec.set_device_state(current, cycle);
+			*self.last_drive_device_state = current;
+		}
 		let value = self.memory.cpu_read(addr, cycle, self.vic);
 		if CAPTURE_ACCESS {
 			*self.debug_access = Some(DebugBusAccess {
@@ -106,7 +137,7 @@ pub struct Motherboard {
 /*
  * BA is the cartridge-port arbitration input sampled by both the processor and
  * the REC.  The VIC-II already resolves its internal AEC timing before this
- * value is published, so external DMA needs only the resulting BA level.
+ * value is published. REU reads also retain the PHI1 arbitration state.
  */
 #[derive(Clone, Copy)]
 struct BusAvailability {
@@ -268,6 +299,10 @@ impl Motherboard {
 				memory: &mut self.memory,
 				vic: &mut self.vic,
 				debug_access: &mut self.debug_last_cpu_access,
+				drive_worker: &mut self.drive_worker,
+				iec: &self.iec,
+				drive_enabled: self.drive_mode != DriveMode::Off,
+				last_drive_device_state: &mut self.last_drive_device_state,
 			};
 			cpu.reset(&mut bus);
 		}
@@ -390,6 +425,9 @@ impl Motherboard {
 			offset += 1;
 		}
 		if load_addr == 0x0801 {
+			/* LOAD leaves EAL/EAH pointing immediately beyond the loaded BASIC text. */
+			self.memory.ram.write(0xAE, end_addr as u8);
+			self.memory.ram.write(0xAF, (end_addr >> 8) as u8);
 			self.memory.ram.write(0x2B, 0x01);
 			self.memory.ram.write(0x2C, 0x08);
 			self.memory.ram.write(0x2D, end_addr as u8);
@@ -468,6 +506,8 @@ impl Motherboard {
 		let (_, iec_clk, iec_data, iec_srq) = self.iec.lines();
 		self.memory.cia2.update_iec_inputs(iec_clk, iec_data);
 		let tod_pulse = self.clock.advance_tod();
+		/* Resolve the preceding CPU write on the shared PB4/LP wire before the next VIC cycle. */
+		self.vic.set_light_pen_pin(self.memory.cia1.light_pen_pin_high());
 		self.vic.tick_sequencer(&mut self.memory, cycle);
 		let availability = BusAvailability {
 			ba_high: !self.vic.ba_low,
@@ -477,6 +517,15 @@ impl Motherboard {
 
 		let (cia_irq, cia_nmi) = tick_cia::run_cia_cycle(&mut self.memory, tod_pulse, iec_srq);
 		self.drive_cycle(cycle);
+		/* DMA can read CIA 2 without passing through CpuBus. Keep its IEC
+		input boundary just as strict as a processor read. */
+		if REU_ENABLED && self.memory.reu.dma.is_some() && self.drive_mode != DriveMode::Off {
+			let (previous, current) = self.drive_worker.synchronise_input(cycle);
+			let (clk, data) = self.iec.input_lines_for_device(previous);
+			self.memory.cia2.update_iec_inputs(clk, data);
+			self.iec.set_device_state(current, cycle);
+			self.last_drive_device_state = current;
+		}
 		let irq_active = vic_irq || cia_irq || (REU_ENABLED && self.memory.reu.irq_pending);
 		if irq_active && !self.cpu.irq_line {
 			self.vic.telemetry.irq_edge_count = self.vic.telemetry.irq_edge_count.wrapping_add(1);
@@ -489,9 +538,9 @@ impl Motherboard {
 
 	/*
 	 * An active REU keeps the processor stopped for the complete DMA command.
-	 * The REC advances only while the cartridge-port BA signal is high; a VIC-II
-	 * request pauses the transfer from the first warning cycle and never lets the
-	 * processor run in the gap.
+	 * The REC arbitrates each read or write phase against the VIC-II request.
+	 * A paused transfer retains DMA ownership and never lets the processor run
+	 * in the gap.
 	 */
 	/*
 	 * Access capture is selected as a const generic so the normal execution path
@@ -517,15 +566,23 @@ impl Motherboard {
 			&& self
 				.memory
 				.run_reu_cycle(availability.ba_high, cycle, &mut self.vic);
-		if !reu_owns_cycle {
+		if reu_owns_cycle {
+			self.cpu.tick(&mut DmaDisconnectedBus, false);
+		} else {
+			let cpu_ready = if REU_ENABLED { self.memory.reu.cpu_ready_after_dma(availability.ba_high) } else { availability.ba_high };
 			let cpu = &mut self.cpu;
 			let mut bus = CpuBus::<CAPTURE_ACCESS> {
 				memory: &mut self.memory,
 				vic: &mut self.vic,
 				debug_access: &mut self.debug_last_cpu_access,
+				drive_worker: &mut self.drive_worker,
+				iec: &self.iec,
+				drive_enabled: self.drive_mode != DriveMode::Off,
+				last_drive_device_state: &mut self.last_drive_device_state,
 			};
-			cpu.tick(&mut bus, availability.ba_high);
+			cpu.tick(&mut bus, cpu_ready);
 		}
+		self.vic.complete_character_access(self.memory.bus_state.latched_value());
 		self.render_sid_cycle();
 	}
 
@@ -567,20 +624,28 @@ impl Motherboard {
 				self.clock.total_cycles,
 				&mut self.vic,
 			);
-		if !reu_owns_cycle {
+		if reu_owns_cycle {
+			self.cpu.tick(&mut DmaDisconnectedBus, false);
+		} else {
+			let cpu_ready = if REU_ENABLED { self.memory.reu.cpu_ready_after_dma(availability.ba_high) } else { availability.ba_high };
 			let cpu = &mut self.cpu;
 			let mut bus = CpuBus::<CAPTURE_ACCESS> {
 				memory: &mut self.memory,
 				vic: &mut self.vic,
 				debug_access: &mut self.debug_last_cpu_access,
+				drive_worker: &mut self.drive_worker,
+				iec: &self.iec,
+				drive_enabled: self.drive_mode != DriveMode::Off,
+				last_drive_device_state: &mut self.last_drive_device_state,
 			};
-			cpu.tick(&mut bus, availability.ba_high);
+			cpu.tick(&mut bus, cpu_ready);
 			if allow_2mhz {
 				let pins = cpu.port.get_pins();
 				bus.memory.update_cpu_port_pins(pins);
 				cpu.tick(&mut bus, true);
 			}
 		}
+		self.vic.complete_character_access(self.memory.bus_state.latched_value());
 		self.render_sid_cycle();
 	}
 

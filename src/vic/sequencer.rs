@@ -49,7 +49,7 @@ impl VicII {
 				self.check_irq_in_cycle2 = false;
 				self.timing.reset_line_to_zero();
 				self.dram_refresh_counter = 0xFF;
-				self.light_pen_triggered = false;
+				self.rearm_light_pen();
 				self.latch_den = false;
 				self.vc_base = 0;
 				if self.regs.raster_irq == 0 {

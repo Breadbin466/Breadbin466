@@ -136,6 +136,11 @@ impl Cia1 {
 		self.inner.pra | !self.inner.ddra
 	}
 
+	/* PB4 shares the active-low keyboard/joystick line with the VIC-II light-pen input. */
+	pub fn light_pen_pin_high(&self) -> bool {
+		self.read_port_b() & 0x10 != 0
+	}
+
 	pub fn set_flag_pin(&mut self, state: bool) {
 		self.inner.set_flag_pin(state);
 	}

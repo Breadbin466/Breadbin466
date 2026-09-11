@@ -35,6 +35,7 @@ pub mod sprite_unit;
 pub mod sprite_timing;
 pub mod sprite_display;
 
+mod light_pen;
 pub mod io;
 pub mod vertical_scroll;
 pub mod horizontal_scroll;

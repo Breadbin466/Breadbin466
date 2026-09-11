@@ -31,7 +31,9 @@ pub(super) fn apply_horizontal_scroll_write(&mut self, data: u8, cycle: u16) {
 		}
 		self.horizontal_scroll_at_cycle57 = new_horizontal_scroll;
 
-		if cycle >= 9 && cycle <= 60 {
+		/* Outside the graphics output window the shifter contains no active cell.
+		 * A scroll write must not reconstruct pixels from stale cell metadata. */
+		if cycle >= 17 && cycle <= 56 {
 			self.apply_scroll_decrement_pixel_transition(mode_old, mode_new, old_horizontal_scroll, new_horizontal_scroll, cycle);
 		}
 	}

@@ -369,6 +369,7 @@ impl Cartridge {
 		let image = CrtImage::parse(data)?;
 		self.mapper_type = image.mapper_type;
 		self.mapper = create_mapper(image.mapper_type);
+		self.mapper.set_hardware_revision(image.hardware_revision);
 		self.crt_name = image.name;
 		self.game = image.game;
 		self.exrom = image.exrom;

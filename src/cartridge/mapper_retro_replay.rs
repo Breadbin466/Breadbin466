@@ -12,6 +12,7 @@ use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperT
 
 /* RetroReplayMapper combines banked ROM, RAM, flash-style writes and freezer modes. Several IO regions are only partially decoded, so bus-drive semantics are kept explicit. */
 pub struct RetroReplayMapper {
+	nordic: bool,
 	rom: BankStorage,
 	ram: Box<[u8; RETRO_REPLAY_RAM_SIZE]>,
 	bank: usize,
@@ -32,6 +33,7 @@ impl RetroReplayMapper {
 	/* Retro Replay powers up as an active ROM cartridge; RAM, clock-port, REU mapping and freezer latches are enabled only by later register writes. */
 	pub fn new() -> Self {
 		Self {
+			nordic: false,
 			rom: BankStorage::new(),
 			ram: Box::new([0x00; RETRO_REPLAY_RAM_SIZE]),
 			bank: 0,
@@ -106,6 +108,9 @@ impl RetroReplayMapper {
 }
 
 impl CartridgeMapper for RetroReplayMapper {
+	fn set_hardware_revision(&mut self, revision: u8) {
+		self.nordic = revision == 1;
+	}
 	fn reset(&mut self) {
 		self.bank = 0;
 		self.mode = 0;
@@ -157,7 +162,7 @@ impl CartridgeMapper for RetroReplayMapper {
 		}
 		let index = (offset & 0x1fff) as usize;
 		if self.ram_at_a000 {
-			return Some(self.ram[self.ram_bank() * RETRO_REPLAY_RAM_BANK_SIZE + index]);
+			return Some(self.ram[index]);
 		}
 		self.read_rom_bank(self.bank, index)
 	}
@@ -209,7 +214,13 @@ impl CartridgeMapper for RetroReplayMapper {
 			0xde00 => {
 				self.bank = ((value >> 3) & 0x03) as usize | (((value >> 7) & 0x01) as usize) << 2;
 				self.ram_selected = (value & 0x20) != 0;
-				self.ram_at_a000 = (value & 0x67) == 0x22;
+				/* Only Nordic Replay implements the additional RAM aperture;
+				 * Retro Replay releases both ROM windows in mode $22
+				 * (REPLAY-HARDWARE-MAPS). */
+				self.ram_at_a000 = self.nordic && (value & 0x27) == 0x22;
+				if self.ram_at_a000 {
+					self.ram_selected = false;
+				}
 				if (value & 0x40) != 0 {
 					self.frozen = false;
 					self.freeze_button_pressed = false;
@@ -249,10 +260,16 @@ impl CartridgeMapper for RetroReplayMapper {
 			return;
 		}
 		let offset = (addr & 0x1fff) as usize;
-		if self.ram_selected && (0x8000..=0x9fff).contains(&addr) {
+		/* Original Retro Replay SRAM is read-only in game modes;
+		 * Nordic Replay enables writes there as well as in Ultimax
+		 * (REPLAY-HARDWARE-MAPS). */
+		if self.ram_selected
+			&& (self.nordic || self.mode == 3)
+			&& (0x8000..=0x9fff).contains(&addr)
+		{
 			self.ram[self.ram_bank() * RETRO_REPLAY_RAM_BANK_SIZE + offset] = value;
 		} else if self.ram_at_a000 && (0xa000..=0xbfff).contains(&addr) {
-			self.ram[self.ram_bank() * RETRO_REPLAY_RAM_BANK_SIZE + offset] = value;
+			self.ram[offset] = value;
 		}
 	}
 
@@ -336,7 +353,12 @@ impl CartridgeMapper for RetroReplayMapper {
 
 	fn get_info(&self) -> CartridgeInfo {
 		CartridgeInfo {
-			name: "Retro Replay".to_string(),
+			name: if self.nordic {
+				"Nordic Replay"
+			} else {
+				"Retro Replay"
+			}
+			.to_string(),
 			mapper_type: MapperType::RetroReplay,
 			rom_size: self.rom.populated_len() * 8192,
 			bank_count: self.rom.populated_len(),

@@ -20,8 +20,8 @@ pub const IRQ_VECTOR: u16 = 0xFFFE;
 pub const INTERRUPT_DELAY: u64 = 2;
 pub const FADE_CYCLES: u64 = 350000;
 
-/* The sentinel is offset below u64::MAX so wrapping subtraction by FADE_CYCLES cannot make an untouched pin look as if it was pulled down recently. */
-pub const NEVER_PULLED_DOWN: u64 = u64::MAX - FADE_CYCLES;
+/* The sentinel is offset below u64::MAX so wrapping subtraction by FADE_CYCLES cannot make an untouched pin look as if it was driven high recently. */
+pub const NEVER_DRIVEN_HIGH: u64 = u64::MAX - FADE_CYCLES;
 /* Read-modify-write opcodes are recognised independently of the decoded operation because undocumented composite instructions use the same read, dummy-write and final-write bus sequence. */
 const fn build_rmw_bitmap() -> [u32; 8] {
 	let mut map = [0u32; 8];

@@ -48,15 +48,15 @@ impl DiskMechanism {
 	#[inline(always)]
 	/* An unformatted or missing half-track still rotates mechanically. The synthetic track length preserves angular continuity while the read channel supplies instability separately. */
 	pub(super) fn advance_empty_track_rotation(&mut self) {
-		if self.phase_track_length == 0 {
+		if self.position_track_length == 0 {
 			return;
 		}
 
-		let track_bits = self.phase_track_length as u64 * 8;
+		let track_bits = self.position_track_length as u64 * 8;
 		self.rotation_numerator = self.rotation_numerator.wrapping_add(track_bits);
 		while self.rotation_numerator >= DRIVE_MASTER_CYCLES_PER_ROTATION {
 			self.rotation_numerator -= DRIVE_MASTER_CYCLES_PER_ROTATION;
-			self.advance_track_position(self.phase_track_length);
+			self.advance_track_position(self.position_track_length);
 		}
 	}
 }

@@ -106,12 +106,16 @@ impl SpriteUnit {
 		self.active_sprite_mask = (self.active_sprite_mask & 0xFF) | ((collision_activity as u16) << 8);
 	}
 
-	/* Reading the sprite-sprite collision register returns the accumulated latch immediately, while clearing is delayed so pixels already in the display pipeline can still contribute. */
+	/* Reading returns the accumulated collision latch immediately. The reset
+	 * reaches the sprite-sprite latch two VIC cycles later, discarding collisions
+	 * in that intervening window before a subsequent read can observe new ones.
+	 * The identical-sprite sweep measures this reset window independently of
+	 * sprite-background collisions (VIC-SPRITE-COLLISION-MEASUREMENTS). */
 	#[inline(always)]
 	pub fn read_sprite_sprite_collision(&mut self) -> u8 {
 		let v = self.sprite_sprite_collision;
 		self.coll.sprite_sprite_int        = 1;
-		self.clock_read_sprite_sprite_coll = self.current_cycle_counter + 2;
+		self.clock_read_sprite_sprite_coll = self.current_cycle_counter + 4;
 		v
 	}
 

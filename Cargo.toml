@@ -3,8 +3,9 @@ cargo-features = ["trim-paths"]
 
 [package]
 name = "Breadbin466"
-version = "0.12.0"
+version = "0.12.1"
 edition = "2024"
+license = "MIT"
 
 # The shared dependency set covers audio, input, windowing, rendering, image I/O,
 # native file dialogs and serialisation used by every supported desktop platform.
@@ -72,7 +73,7 @@ trim-paths = "all"
 [package.metadata.bundle]
 name = "Breadbin466"
 identifier = "com.foursixsix.breadbin466"
-version = "0.12.0"
+version = "0.12.1"
 copyright = "Copyright © 2025–2026 The Breadbin466 Team"
 category = "public.app-category.entertainment"
 short_description = "C64 Emulator"

@@ -1,10 +1,8 @@
 // =======================================================
-// src/fdd1541/thread.rs — Free-running 1541 worker thread
+// src/fdd1541/thread.rs — 1541 execution ownership and control thread
 // =======================================================
 
-use super::constants::{
-	DRIVE_BATCH_LIMIT, DRIVE_MAX_SKEW, DRIVE_SKEW_CHECK_MASK, DRIVE_TIGHT_WINDOW,
-};
+use super::constants::{DRIVE_BATCH_LIMIT, DRIVE_TIGHT_WINDOW, DRIVE_SKEW_CHECK_MASK, DRIVE_MAX_SKEW};
 use std::hint::spin_loop;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -55,11 +53,12 @@ pub struct DriveWorker {
 	pub(super) last_host_state: u32,
 	pub(super) device_view: u32,
 	pub(super) connected: bool,
-	pub(super) tight: u32,
+	tight: u32,
+	previous_device_view: u32,
 }
 
 impl DriveWorker {
-	/* Starting the worker transfers exclusive ownership of a fresh Fdd1541 to the drive thread; temporary host ownership is requested only for tight synchronisation windows. */
+	/* Starting the worker transfers exclusive ownership of a fresh Fdd1541 to the drive thread; cable reads and output changes acquire host ownership at exact emulated boundaries. */
 	pub fn new(host_clock_hz: u32) -> Self {
 		let (request_tx, request_rx) = mpsc::channel();
 		let (response_tx, response_rx) = mpsc::channel();
@@ -80,6 +79,7 @@ impl DriveWorker {
 			device_view: 0,
 			connected: true,
 			tight: DRIVE_TIGHT_WINDOW,
+			previous_device_view: 0,
 		}
 	}
 
@@ -109,49 +109,52 @@ impl DriveWorker {
 	}
 
 	#[inline(always)]
-	/* A host tick publishes the latest cable state and receives the drive result for the same scheduling boundary without exposing mutable drive internals. */
+	/* Between cable accesses the independent drive may run on its worker.
+	Host output changes acquire the preceding boundary before advancing the
+	drive. Reads explicitly acquire that boundary too; a silent cable never
+	permits a CPU-visible read to use an unfinished worker result. */
 	pub fn tick_host(&mut self, cycle: u64, host_state: u32) -> u32 {
-		if (self.tight > 0 || host_state != self.last_host_state) && self.local_drive.is_none() {
-			self.take_ownership(cycle.wrapping_sub(1));
+		let completed = cycle.wrapping_sub(1);
+		if self.local_drive.is_some() && self.tight == 0 && host_state == self.last_host_state {
+			self.return_ownership(completed);
 		}
-
+		if self.local_drive.is_none() && (self.tight > 0 || host_state != self.last_host_state) {
+			self.take_ownership(completed);
+		}
 		if let Some(drive) = self.local_drive.as_mut() {
-			let device_state = if host_state != self.last_host_state {
+			self.previous_device_view = self.device_view;
+			let state = if host_state != self.last_host_state {
 				self.last_host_state = host_state;
 				self.tight = DRIVE_TIGHT_WINDOW;
 				drive.run_committed_host_cycle(host_state, self.connected)
 			} else {
 				drive.run_stable_host_cycle()
 			};
-			if device_state != self.device_view {
-				self.device_view = device_state;
-				self.tight = DRIVE_TIGHT_WINDOW;
-			} else if self.tight > 0 {
-				self.tight -= 1;
-			}
-			if self.tight == 0 {
-				self.return_ownership(cycle);
-			}
-			return self.device_view;
+			if state != self.device_view { self.tight = DRIVE_TIGHT_WINDOW; }
+			else { self.tight = self.tight.saturating_sub(1); }
+			self.device_view = state;
+			return state;
 		}
-
-		if (cycle & DRIVE_SKEW_CHECK_MASK) == 0 {
-			self.cable.host_cycle.0.store(cycle, Ordering::Relaxed);
-			self.wait_for_drive(cycle.saturating_sub(DRIVE_MAX_SKEW));
-		}
-
-		if self.cable.device_events.is_empty() {
-			return self.device_view;
-		}
-
-		if self
-			.cable
-			.device_events
-			.drain_up_to(cycle, &mut self.device_view)
-		{
-			self.tight = DRIVE_TIGHT_WINDOW;
+		if cycle & DRIVE_SKEW_CHECK_MASK == 0 {
+			self.publish_host_cycle(completed);
+			self.wait_for_drive(completed.saturating_sub(DRIVE_MAX_SKEW));
+			self.cable.device_events.drain_up_to(completed, &mut self.device_view);
 		}
 		self.device_view
+	}
+
+	/* CIA input sampling precedes this cycle's drive step. Preserve that
+	phase when a CPU or DMA read ends a parallel interval, then advance the
+	drive once for the current cycle. The second state is published for the
+	next motherboard cycle. Repeated reads in one cycle do not clock twice. */
+	pub fn synchronise_input(&mut self, cycle: u64) -> (u32, u32) {
+		if self.local_drive.is_none() {
+			self.take_ownership(cycle.wrapping_sub(1));
+			self.previous_device_view = self.device_view;
+			self.device_view = self.local_drive.as_mut().expect("1541 ownership unavailable during cable read").run_stable_host_cycle();
+		}
+		self.tight = DRIVE_TIGHT_WINDOW;
+		(self.previous_device_view, self.device_view)
 	}
 
 	/* Connection state is applied on the next committed host cycle so it becomes an electrical event, not an asynchronous mutation of the drive. */
@@ -219,6 +222,7 @@ impl DriveWorker {
 		drive.reset_with_iec_state(host_state, self.connected);
 		self.last_host_state = host_state;
 		self.device_view = drive.device_iec_state();
+		self.previous_device_view = self.device_view;
 		self.tight = DRIVE_TIGHT_WINDOW;
 		self.cable.device_events.clear();
 		self.cable.host_cycle.0.store(0, Ordering::Relaxed);
@@ -232,6 +236,8 @@ impl DriveWorker {
 			let _ = drive.flush_now();
 			drive.reset();
 			self.device_view = drive.device_iec_state();
+		self.previous_device_view = self.device_view;
+		self.tight = DRIVE_TIGHT_WINDOW;
 			self.cable.device_events.clear();
 			return DriveStatus::from_drive(drive);
 		}

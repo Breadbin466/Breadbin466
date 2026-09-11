@@ -1,6 +1,13 @@
 version = 1
 
 [[source]]
+id = "CIA-TOD-MEASUREMENTS"
+title = "MOS 6526 TOD hardware observations and diagnostic protocols"
+author = "VICE test-suite contributors"
+publisher = "VICE test programmes"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CIA/tod/readme.txt"
+
+[[source]]
 id = "MOS-6526-1981"
 title = "6526 Complex Interface Adapter (CIA)"
 author = "MOS Technology / Commodore Semiconductor Group"
@@ -197,3 +204,191 @@ publisher = "SID_schematics project"
 date = "2021"
 url = "https://github.com/libsidplayfp/SID_schematics/wiki/Data-Bus"
 archive_url = "https://sourceforge.net/p/sidplay-residfp/wiki/SID%20internals%20-%20Data%20Bus/"
+
+[[source]]
+id = "VISUAL6502-DECIMAL"
+title = "6502 Decimal Mode: datapath analysis and test vectors"
+author = "Visual6502 wiki contributors"
+publisher = "Visual6502 wiki / NESdev archive"
+url = "https://www.nesdev.org/wiki/Visual6502wiki/6502DecimalMode"
+
+[[source]]
+id = "CIA-SERIAL-MEASUREMENTS"
+title = "MOS 6526 serial timing measurements on C64 and C128 hardware"
+author = "Andre Fachat and William McCabe"
+publisher = "Hardware measurements accompanying CIA shift-register diagnostics"
+url = "https://sourceforge.net/p/vice-emu/bugs/1219/"
+
+[[source]]
+id = "CRT-FORMAT"
+title = "CRT cartridge image format: header and hardware revision field"
+author = "VICE contributors"
+publisher = "VICE file-format specification"
+url = "https://vice-emu.sourceforge.io/vice_17.html"
+
+[[source]]
+id = "REPLAY-HARDWARE-MAPS"
+title = "Extra Replay V0.1: original Retro Replay and Nordic Replay memory mappings"
+author = "Daniel Kahlin"
+publisher = "ReplayResources"
+year = 2018
+url = "https://rr.pokefinder.org/wiki/Extra_Replay"
+
+[[source]]
+id = "CIA-TIMER-B-MEASUREMENTS"
+title = "6526 Timer B ICR polling observations on original C64 hardware"
+author = "Michiel Boland"
+publisher = "Lemon64 hardware discussion"
+year = 2024
+url = "https://www.lemon64.com/forum/viewtopic.php?t=85753"
+
+[[source]]
+id = "CIA-ICR-MEASUREMENTS"
+title = "Consecutive ICR read and write timing on original CIA hardware"
+author = "Wilfred Bos; Tobias Larsson; Groepaz"
+publisher = "VICE-testprogs hardware diagnostics and measured references"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/CIA/dd0dtest"
+notes = "dd0dtest scenarios 0B–19, cia-icr-test2 isolated-mask-write controls, and cia-int physical-machine references. Diagnostic observations only; no emulator implementation used."
+[[source]]
+id = "CPU-MASKED-STORE-MEASUREMENTS"
+title = "SHX, SHY, SHA and SHS page crossing and DMA timing measured on C64 hardware"
+author = "Groepaz and Shrydar"
+publisher = "VICE-testprogs diagnostic hardware observations"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CPU/shxy/readme.txt"
+notes = "Physical 6510 and 8500 observations, also documented in CPU/sha and CPU/shs. Only diagnostic observations used; no emulator implementation."
+[[source]]
+id = "CPU-PORT-MEASUREMENTS"
+title = "6510 port reset state and floating input charge observations"
+author = "Groepaz"
+publisher = "VICE-testprogs hardware diagnostics"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CPU/cpuport/readme.txt"
+notes = "Reset DDR/DATA observations and the physical test1 output-to-input charge-retention sequence. Existing decay interval retained; no emulator implementation used."
+[[source]]
+id = "CPU-ANE-MEASUREMENTS"
+title = "ANE immediate operand stability, RDY observations and original C64 program constraints"
+author = "Groepaz"
+publisher = "VICE-testprogs physical-machine observations and diagnostic analysis"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CPU/ane/readme.txt"
+notes = "The analogue parameter varies between chips. EF is the selected reference profile, with bit 0 suppressed for a stretched operand read; this is not a claim that every physical 6510 has the same analogue value. No external emulator implementation used."
+[[source]]
+id = "CPU-PORT-RAM-MEASUREMENTS"
+title = "Physical RAM writes beneath the 6510 integrated port"
+publisher = "VICE-testprogs original-hardware diagnostic observations"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/general/ram0001/readme.txt"
+[[source]]
+id = "CPU-IRQ-NMI-MEASUREMENTS"
+title = "Overlapping IRQ and NMI timer measurements on a physical C64"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/interrupts/irqnmi/readme.txt"
+notes = "Diagnostic timer measurements and dumpold.bin reference only. IRQ entry vector selection and the first handler instruction are checked without consulting emulator implementation code."
+[[source]]
+id = "CPU-IRQ-DMA-MEASUREMENTS"
+title = "IRQ and NMI recognition during VIC DMA, physical C64 reference dumps"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/interrupts/irqdma/howto.txt"
+notes = "Diagnostic programs and physical reference data only. A stretched final read of a taken branch does not reopen its earlier IRQ sampling point."
+[[source]]
+id = "SID-POWER-UP-MEASUREMENTS"
+title = "SID oscillator and noise initial-state measurements"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/SID/oscinit"
+notes = "Primary diagnostic checks: accumulator 555555, noise output FE after startup. Diagnostic source and measurements only."
+
+[[source]]
+id = "SID-SCHEMATICS-NOISE"
+title = "Noise generator transistor reconstruction"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/Noise-Generator"
+notes = "Physical shift stages, feedback, TEST and RESET signals. No external emulator implementation used."
+[[source]]
+id = "SID-ENVELOPE-COUNTER-CIRCUIT"
+title = "SID envelope counter direction and enable circuit reconstruction"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/Counter-Logic"
+
+[[source]]
+id = "SID-ENVELOPE-EXPONENTIAL-MEASUREMENTS"
+title = "SID exponential counter reset hardware diagnostic"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/SID/exp_counter_reset"
+[[source]]
+id = "SID-WAVE-SELECTOR-CIRCUIT"
+title = "SID waveform selector transistor connections"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/Wave-Selector"
+
+[[source]]
+id = "SID-NOISE-WRITEBACK-MEASUREMENTS"
+title = "Noise register writeback transitions and physical SID reference sequences"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/SID/wb_testsuite"
+[[source]]
+id = "SID-ADSR-RATE-GATES"
+title = "SID ADSR register gating by GATE and R0"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/ADSR-registers"
+[[source]]
+id = "SID-NOISE-INITIALISATION-MEASUREMENTS"
+title = "Noise initialisation measurements on ten 8580 chips and one 6581"
+url = "https://sourceforge.net/p/vice-emu/bugs/1920/"
+[[source]]
+id = "SID-PULSE-WRITEBACK-MEASUREMENTS"
+title = "Noise writeback sampling logs for physical 6581 chips 2586 and 2783"
+author = "Leandro Nini"
+year = 2018
+url = "https://sourceforge.net/p/vice-emu/bugs/_discuss/thread/cee789e4/e4dc/attachment/wb_testsuite.zip"
+
+[[source]]
+id = "VIC-LIGHT-PEN-MEASUREMENTS"
+title = "6569 light-pen timing measurements by TLR and Hedning"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/VICII/split-tests/lightpen"
+[[source]]
+id = "COMMODORE-1541-SERVICE-MANUAL"
+title = "1540/1541 Disk Drive Service Manual, PN 314002-01"
+author = "Commodore"
+year = 1985
+url = "https://www.zimmers.net/anonftp/pub/cbm/schematics/drives/new/1541/1540-1541_Disk_Drive_Service_Manual_314002-01_(1985_Nov).pdf"
+[[source]]
+id = "MOS-6522-DATASHEET"
+title = "MOS Technology 6522 Versatile Interface Adapter"
+url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/6522-VIA.txt"
+
+[[source]]
+id = "VIA-HARDWARE-DIAGNOSTICS"
+title = "VIA timer and port measurements on 1541C and 1541-II"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/drive/viavarious"
+[[source]]
+id = "6569-COLOUR-TIMING-MEASUREMENTS"
+title = "6569 and 8565 colour-register output timing observations"
+author = "Daniel Kahlin (TLR)"
+url = "https://csdb.dk/forums/?roomid=11&topicid=158725"
+[[source]]
+id = "D64-SCANNER-DIAGNOSTICS"
+title = "1541 sector scanner and D64 error-map diagnostics"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/drive/scanner"
+[[source]]
+id = "1541-HEAD-MOTION-OBSERVATIONS"
+title = "1541-II stepper motion, settling and rapid field reversals"
+author = "Linus Akesson"
+year = 2022
+url = "https://www.linusakesson.net/music/partita-prelude/index.php"
+[[source]]
+id = "REU-TIMING-HARDWARE-MEASUREMENTS"
+title = "REU DMA versus VIC-II DMA: hardware reference recordings and timing diagnostics"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/REU/reutiming2"
+
+[[source]]
+id = "VIC-SPRITE-COLLISION-MEASUREMENTS"
+title = "Identical overlapping sprite collision diagnostic and reference measurements"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/VICII/spritevssprite"
+
+[[source]]
+id = "VIC-GRAPHICS-MODE-MEASUREMENTS"
+title = "VIC-II mode transition diagnostics and PAL 6569 hardware captures"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/VICII/videomode"
+
+[[source]]
+id = "VIC-DMA-DELAY-IDLE-MEASUREMENTS"
+title = "6569R5 DMA-delay idle-byte address measurements"
+url = "https://sourceforge.net/p/vice-emu/bugs/1855/"
+
+[[source]]
+id = "REU-RECALL-DOUBLE-WRITE-MEASUREMENT"
+title = "REC recall startup double-write diagnostic, dw/style"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/REU/badoublewrite"
+
+[[source]]
+id = "REU-SPRITE-STREAM-MEASUREMENTS"
+title = "Real Commodore REU sprite-stream timing measurements, Walt/Bonzai"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/REU/bonzai"

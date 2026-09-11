@@ -13,7 +13,7 @@ use crate::cartridge::Cartridge;
 use crate::cia::{Cia1, Cia2};
 use crate::iec::IecBus;
 use crate::mouse1351::Mouse1351;
-use crate::pla::cpu_map::{CpuWriteSelection, build_read_page_map, build_write_selection_map};
+use crate::pla::cpu_map::{CpuWriteSelection, build_read_page_map, build_write_selection_map, map_cpu_read_addr_with_ba};
 use crate::reu::{Reu, ReuBusAction};
 use crate::sid::Mos6581;
 use crate::vic::VicII;
@@ -186,7 +186,7 @@ impl Memory {
 	 */
 	#[inline(always)]
 	pub fn run_reu_cycle(&mut self, ba_high: bool, cycle: u64, vic: &mut VicII) -> bool {
-		match self.reu.bus_action(ba_high) {
+		match self.reu.bus_action(ba_high, vic.ba_high_at_phi1(), cycle) {
 			ReuBusAction::Cpu => false,
 			ReuBusAction::Hold => true,
 			ReuBusAction::Transfer => {
@@ -201,8 +201,27 @@ impl Memory {
 	/* A CPU read resolves one PLA-selected source, applies device side effects, then refreshes the shared data-bus latch with the value actually observed. Colour RAM contributes only its low nibble; unmapped and unclaimed cartridge reads retain the floating bus. */
 	#[inline(always)]
 	pub fn cpu_read(&mut self, addr: u16, cycle: u64, vic: &mut VicII) -> u8 {
+		self.read_with_ba(addr, cycle, vic, !vic.ba_low)
+	}
+
+	/* The REC calls this only for an accepted read phase. Preserve that phase's
+	 * I/O selection through the BA warning window, rather than decoding it from
+	 * the VIC's later pin state. The old-VIC REU timing recordings distinguish
+	 * this window from the newer motherboard's RAM-under-I/O read glitch. */
+	pub fn reu_read(&mut self, addr: u16, cycle: u64, vic: &mut VicII) -> u8 {
+		self.read_with_ba(addr, cycle, vic, true)
+	}
+
+	fn read_with_ba(&mut self, addr: u16, cycle: u64, vic: &mut VicII, ba_high: bool) -> u8 {
 		let cpu_port_pins = self.last_cpu_port_pins;
-		let region = self.read_map[(addr >> 8) as usize];
+		/* The cached map describes BA high. During the VIC warning interval,
+		 * evaluate the same PLA with the live BA pin before issuing a read.
+		 * (C64-PLA-DISSECTED-2012, section 2.7) */
+		let region = if !ba_high {
+			map_cpu_read_addr_with_ba(addr, cpu_port_pins, self.cartridge.game, self.cartridge.exrom, false)
+		} else {
+			self.read_map[(addr >> 8) as usize]
+		};
 		let value = match region {
 			MapRegion::Ram => self.ram.read(addr),
 			MapRegion::Basic => self.rom.read_basic(addr - BASIC_ROM_START),
@@ -257,7 +276,7 @@ impl Memory {
 					}
 				}
 				0xDE00..=0xDFFF => {
-					if self.reu.enabled && addr >= 0xDF00 && addr <= 0xDF0A {
+					if self.reu.enabled && addr >= 0xDF00 {
 						self.reu.read(addr)
 					} else {
 						let floating = if self.c128_2mhz_debug_enabled {
@@ -348,7 +367,7 @@ impl Memory {
 				}
 				0xDD00..=0xDDFF => self.cia2.write(addr, value, cycle),
 				0xDE00..=0xDFFF => {
-					if self.reu.enabled && addr >= 0xDF00 && addr <= 0xDF0A {
+					if self.reu.enabled && addr >= 0xDF00 {
 						self.reu.write(addr, value);
 					} else {
 						self.cartridge.write_io(addr, value, cycle);
@@ -404,8 +423,8 @@ impl Memory {
 				0xD400..=0xD7FF => 0xFF,
 				0xDC00..=0xDCFF => self.cia1.peek(addr),
 				0xDD00..=0xDDFF => self.cia2.peek(addr),
-				0xDF00..=0xDF0A if self.reu.enabled => {
-					self.reu.debug_register((addr & 0x0F) as usize)
+				0xDF00..=0xDFFF if self.reu.enabled => {
+					self.reu.debug_register((addr & 0x1F) as usize)
 				}
 				0xDE00..=0xDFFF => self.cartridge.debug_peek_io(addr, cycle).unwrap_or(0xFF),
 				_ => 0xFF,

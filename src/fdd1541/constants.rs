@@ -10,9 +10,11 @@ pub(crate) const GCR_ENCODE: [u8; 16] = [
 /* The event ring is a power of two so monotonically increasing counters can select slots with a mask while still detecting fullness from their distance. */
 pub(crate) const DRIVE_RING_CAPACITY: usize = 65_536;
 pub(crate) const DRIVE_RING_MASK: u64 = DRIVE_RING_CAPACITY as u64 - 1;
+/* These limits bound scheduling overhead only. Cable reads always wait
+for the exact emulated boundary regardless of worker lag. */
 pub(crate) const DRIVE_TIGHT_WINDOW: u32 = 2_000;
-pub(crate) const DRIVE_SKEW_CHECK_MASK: u64 = 7;
-pub(crate) const DRIVE_MAX_SKEW: u64 = 56;
+pub(crate) const DRIVE_SKEW_CHECK_MASK: u64 = 255;
+pub(crate) const DRIVE_MAX_SKEW: u64 = 4096;
 pub(crate) const DRIVE_BATCH_LIMIT: u64 = 4_096;
 /* The seven low IFR bits retain the MOS 6522 interrupt-source layout; bit 7 is the derived IRQ summary. */
 pub(crate) const VIA_IFR_CA2: u8 = 0x01;
@@ -80,3 +82,7 @@ pub(crate) const DOS_ROM: &[u8; 16_384] =
 	include_bytes!("../../roms/dos1541-325302-01+901229-05.bin");
 pub(crate) const DRIVE_RAM_SIZE: usize = 0x0800;
 pub(crate) const DOS_ROM_SIZE: usize = 16_384;
+/* Nominal mechanical response interval after a stepper field transition.
+The carriage follows on a millisecond scale; rapid field reversals do not
+produce an immediately settled read position. (1541-HEAD-MOTION-OBSERVATIONS) */
+pub(crate) const HEAD_SETTLING_CYCLES: u32 = 2_000;

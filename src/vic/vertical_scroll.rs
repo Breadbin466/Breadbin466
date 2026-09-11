@@ -3,7 +3,6 @@
 // =======================================================
 
 use super::fsm::{GraphicsMode, CharacterAccessState, DisplayState, DisplayTransition};
-use crate::memory::Memory;
 use super::state::VicII;
 use super::constants::IRQ_RASTER;
 
@@ -15,7 +14,7 @@ impl VicII {
 	/*
 	The write is intentionally decomposed in raster order. Border comparators first observe the old and new RSEL/DEN combination, the raster compare high bit is then updated, and only afterwards is badline state recomputed from the new YSCROLL value. This prevents an atomic host-language assignment from erasing cycle-local VIC-II effects.
 	*/
-	pub(super) fn apply_vertical_scroll_write(&mut self, data: u8, memory: &mut Memory, cycle: u16, old_rsel: bool, was_badline: bool) {
+	pub(super) fn apply_vertical_scroll_write(&mut self, data: u8, cycle: u16, old_rsel: bool, was_badline: bool) {
 		let mode_old              = self.graphics_mode;
 		self.mode_changing        = true;
 		let old_horizontal_scroll = self.regs.x_scroll();
@@ -74,7 +73,7 @@ impl VicII {
 			self.latch_den |= den;
 		}
 
-		self.apply_badline_state(y_scroll, cycle, memory, was_badline);
+		self.apply_badline_state(y_scroll, cycle, was_badline);
 
 		if mode_old != mode_new && cycle >= 9 && cycle <= 60 {
 			self.apply_graphics_mode_transition(mode_old, mode_new, old_horizontal_scroll, cycle);
@@ -82,9 +81,9 @@ impl VicII {
 	}
 
 	/*
-	Re-evaluating YSCROLL during the badline window can start or cancel character accesses on the current line. A newly forced badline enters display state immediately, records the open-bus opcode value and schedules the first late c-access without replaying earlier cycles.
+	Re-evaluating YSCROLL during the badline window can start or cancel character accesses on the current line. A newly forced badline enters display state immediately, schedules the first late c-access without replaying earlier cycles.
 	*/
-	fn apply_badline_state(&mut self, y_scroll: u8, cycle: u16, memory: &mut Memory, was_badline: bool) {
+	fn apply_badline_state(&mut self, y_scroll: u8, cycle: u16, was_badline: bool) {
 		let line = self.timing.raster_line;
 
 		if cycle != 63 {
@@ -101,8 +100,6 @@ impl VicII {
 			}
 			if !was_badline {
 				self.char_data_carry = 0;
-
-				self.cpu_next_op_code = memory.bus_state.latched_value();
 
 				self.display_state = DisplayState::Display;
 			}

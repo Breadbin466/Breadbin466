@@ -18,7 +18,6 @@ struct GateHistory {
 	input: bool,
 	stage_a: bool,
 	stage_b: bool,
-	stage_c: bool,
 }
 
 impl GateHistory {
@@ -27,16 +26,14 @@ impl GateHistory {
 			input: false,
 			stage_a: false,
 			stage_b: false,
-			stage_c: false,
 		}
 	}
 
 	#[inline]
 	fn advance(&mut self) -> Option<bool> {
-		let rose = !self.stage_c && self.stage_b;
-		let fell = self.stage_c && !self.stage_b;
+		let rose = !self.stage_b && self.stage_a;
+		let fell = self.stage_b && !self.stage_a;
 
-		self.stage_c = self.stage_b;
 		self.stage_b = self.stage_a;
 		self.stage_a = self.input;
 
@@ -132,9 +129,13 @@ impl Envelope {
 		self.refresh_rate_target_phase();
 	}
 
-	/* GATE changes the sampled input. Direction changes occur only after the sampled transition reaches the control path. */
+	/* A rising GATE unlocks the counter immediately. Counting direction follows the sampled control path. */
 	pub fn set_gate(&mut self, gate: bool) {
+		if gate && !self.gate.input {
+			self.floor_hold = false;
+		}
 		self.gate.input = gate;
+		self.refresh_rate_target_phase();
 	}
 
 	#[inline]
@@ -147,7 +148,6 @@ impl Envelope {
 		if self.queued_curve_divisor == 0
 			&& self.gate.input == self.gate.stage_a
 			&& self.gate.stage_a == self.gate.stage_b
-			&& self.gate.stage_b == self.gate.stage_c
 			&& self.motion_delay == 0
 			&& self.amplitude_delay == 0
 			&& self.curve_delay == 0
@@ -214,10 +214,6 @@ impl Envelope {
 
 		if self.motion_delay == 0 {
 			self.motion = self.requested_motion;
-			if self.motion == EnvelopeMotion::Rising {
-				self.floor_hold = false;
-				self.curve_count = 0;
-			}
 		}
 		self.refresh_rate_target_phase();
 	}
@@ -274,7 +270,7 @@ impl Envelope {
 
 		self.curve_count = 0;
 		let amplitude_change_due = match self.motion {
-			EnvelopeMotion::Rising => false,
+			EnvelopeMotion::Rising => true,
 			EnvelopeMotion::FallingToSustain => self.volume != self.hold_level,
 			EnvelopeMotion::FallingToZero => true,
 		};
@@ -293,7 +289,7 @@ impl Envelope {
 		self.matched_rate = false;
 		self.rate_phase = 0;
 
-		if self.motion == EnvelopeMotion::Rising {
+		if self.rising_rate_selected() {
 			self.curve_count = 0;
 			self.amplitude_delay = 2;
 		} else if !self.floor_hold {
@@ -317,15 +313,24 @@ impl Envelope {
 	}
 
 	#[inline]
+	/* R0 selects the rate and bypasses the exponential divider one cycle
+	 * before cnt_up changes the amplitude counter direction. */
+	fn rising_rate_selected(&self) -> bool {
+		if self.motion_delay == 1 {
+			self.requested_motion == EnvelopeMotion::Rising
+		} else {
+			self.motion == EnvelopeMotion::Rising
+		}
+	}
+
+	#[inline]
 	fn refresh_rate_target_phase(&mut self) {
-		let rate = if self.requested_motion == EnvelopeMotion::Rising && self.motion_delay == 1 {
+		let rate = if self.rising_rate_selected() {
+			self.rise_rate
+		} else if self.gate.input {
 			self.decay_rate
 		} else {
-			match self.motion {
-				EnvelopeMotion::Rising => self.rise_rate,
-				EnvelopeMotion::FallingToSustain => self.decay_rate,
-				EnvelopeMotion::FallingToZero => self.fall_rate,
-			}
+			self.fall_rate
 		};
 
 		self.rate_target_phase = (envelope_rate_period(rate) - 1) as u16;

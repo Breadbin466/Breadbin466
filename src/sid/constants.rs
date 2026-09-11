@@ -297,7 +297,9 @@ pub const DATA_BUS_HOLD_CYCLES: [u32; 8] = [
 ];
 
 pub const PHASE_MASK: u32 = 0x00ff_ffff;
-pub const PHASE_RESET_VALUE: u32 = 10_977_228;
+/* Alternating stored polarity produces this phase at power-up
+ * (SID-POWER-UP-MEASUREMENTS). RESET preserves the accumulator. */
+pub const PHASE_RESET_VALUE: u32 = 0x0055_5555;
 pub const WAVEFORM_MASK: u16 = 0x0fff;
 
 pub const COMBINED_WAVEFORM_TABLE_SIZE: usize = 4096;
@@ -414,7 +416,9 @@ pub const WAVEFORM_PIPELINE_RESET_VALUE: u16 = 0x0000;
 pub const SYNC_EVENT_MASK: u32 = 0x0080_0000;
 pub const NOISE_EVENT_MASK: u32 = 0x0008_0000;
 pub const NOISE_MASK: u32 = 0x007f_ffff;
-pub const NOISE_RESET_VALUE: u32 = 0x007f_ffff;
+/* Stored stages are numbered in shift-right order; the feedback end
+ * powers up low, yielding FE on the eight noise output lines. */
+pub const NOISE_RESET_VALUE: u32 = 0x003f_ffff;
 pub const COMBINED_WAVEFORM_MSB_CLEAR_MASK: u32 = 0x007f_ffff;
 pub const NOISE_OUTPUT_TAPS: [u8; 8] = [2, 4, 8, 11, 13, 17, 20, 22];
 
@@ -470,3 +474,13 @@ const ENVELOPE_RATE_COMPARATORS: [u16; 16] = build_envelope_rate_comparators();
 pub const fn envelope_rate_comparator(rate: u8) -> u16 {
 	ENVELOPE_RATE_COMPARATORS[(rate & 0x0f) as usize]
 }
+/* Effective discharge divisor of the isolated noise stages loaded through
+ * the pulse selector. A full charge crosses the logic threshold after ten
+ * SID clocks; successive shorter apertures retain their residual charge. */
+pub const NOISE_PULSE_CHARGE_DIVISOR: u16 = 14;
+/* Effective transfer-aperture threshold of the shared pulse node in the
+ * selected 6581 profile. The three lowest noise lines remain discharged
+ * after a grounded driver disconnects while pulse remains connected.
+ * Physical noise/pulse writeback sequences determine this digital boundary;
+ * it is not a transistor voltage or a chip-independent analogue parameter. */
+pub const NOISE_PULSE_TRANSFER_RETAINED_LINES: u16 = WAVEFORM_MASK & !0x0070;

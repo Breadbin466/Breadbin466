@@ -2,19 +2,63 @@
 // src/fdd1541/mechanics.rs — DiskMechanism head position and stepper motor mechanics
 // =======================================================
 
-use super::constants::G64_MAX_HALF_TRACKS;
+use super::constants::{DRIVE_MASTER_CYCLES_PER_ROTATION, G64_MAX_HALF_TRACKS, HEAD_SETTLING_CYCLES};
 use super::disk_drive::DiskMechanism;
 use super::media::TrackSpeed;
 
 impl DiskMechanism {
+	/* Coil commands change the field immediately, while the carriage follows
+		on a millisecond time scale. A new pattern supersedes an unsettled
+		command; a rapid round trip of the field need not move the head.
+		Spindle rotation continues independently throughout this response.
+		(1541-HEAD-MOTION-OBSERVATIONS) */
+	pub(super) fn clock_stepper(&mut self, motor: bool, phase: u8) {
+		if phase != self.phase_output {
+			self.phase_output = phase;
+			if self.motor_latched {
+				self.head_settling_cycles = HEAD_SETTLING_CYCLES;
+			}
+		}
+		if self.head_settling_cycles != 0 {
+			self.head_settling_cycles -= 1;
+			if self.head_settling_cycles == 0 && motor {
+				self.update_stepper(self.phase_output);
+			}
+		}
+		self.motor_latched = motor;
+	}
+
 	/* Refreshing the cached track view is the boundary between stepper motion and rotation. A head move selects a new half-track, then this helper snapshots the circular byte length and whether that track carries a per-byte G64 speed map. */
 	pub(super) fn refresh_phase_track_metadata(&mut self) {
 		let track_index = self.track_index();
-		self.phase_track_length = self.tracks.get(track_index).map(Vec::len).unwrap_or(0);
-		self.phase_track_variable_speed = matches!(
-			self.track_speed.get(track_index),
-			Some(TrackSpeed::PerByte(_))
-		);
+		let length = self.tracks.get(track_index).map(Vec::len).unwrap_or(0);
+		let variable_speed = matches!(self.track_speed.get(track_index), Some(TrackSpeed::PerByte(_)));
+		/* A radial movement changes the number of recorded cells, not the
+		spindle angle. Retain the coordinate scale on blank half-tracks and
+		convert the position when a different circumference is selected. */
+		if length != 0 && self.position_track_length != 0 && length != self.position_track_length {
+			let old_bits = self.position_track_length as u128 * 8;
+			let new_bits = length as u128 * 8;
+			let position = (self.byte_pos as u128 * 8 + u128::from(self.bit_pos)) % old_bits;
+			let period = u128::from(DRIVE_MASTER_CYCLES_PER_ROTATION);
+			let fraction = if !self.phase_track_variable_speed && !variable_speed {
+				u128::from(self.rotation_numerator)
+			} else {
+				0
+			};
+			let scaled = (position * period + fraction) * new_bits / old_bits;
+			let bit_position = (scaled / period) as usize;
+			self.byte_pos = bit_position / 8;
+			self.bit_pos = (bit_position % 8) as u8;
+			if !self.phase_track_variable_speed && !variable_speed {
+				self.rotation_numerator = (scaled % period) as u64;
+			}
+		}
+		if length != 0 {
+			self.position_track_length = length;
+		}
+		self.phase_track_length = length;
+		self.phase_track_variable_speed = variable_speed;
 	}
 	/* Internal half-tracks start at physical half-track 2, which represents DOS track 1. Subtracting two converts that hardware numbering into the zero-based vector index used by the mounted media. */
 	pub(super) fn track_index(&self) -> usize {
@@ -45,17 +89,6 @@ impl DiskMechanism {
 		let new_index = self.track_index();
 		if old_index != new_index {
 			self.refresh_phase_track_metadata();
-		}
-		let new_length = self.phase_track_length;
-		if old_index != new_index && new_length != 0 {
-			let new_bit_length = new_length.saturating_mul(8);
-			let bit_position = self
-				.byte_pos
-				.saturating_mul(8)
-				.saturating_add(self.bit_pos as usize)
-				% new_bit_length;
-			self.byte_pos = bit_position / 8;
-			self.bit_pos = (bit_position % 8) as u8;
 		}
 	}
 }

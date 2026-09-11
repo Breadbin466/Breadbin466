@@ -3,7 +3,7 @@
 // =======================================================
 
 use super::CpuModel;
-use super::constants::{FADE_CYCLES, NEVER_PULLED_DOWN};
+use super::constants::{FADE_CYCLES, NEVER_DRIVEN_HIGH};
 
 #[derive(Debug, Clone, Copy)]
 /*
@@ -13,24 +13,26 @@ pub struct CpuPort {
 	pub ddr: u8,
 	/* The CPU-visible latch accepts the current write before the pin-driving state is committed. */
 	pub latch_write: u8,
-	/* The committed latch is the value currently participating in pin and pull-down behaviour. */
+	/* The committed latch is the value currently participating in pin and charge-retention behaviour. */
 	pub latch_committed: u8,
 	pub output: u8,
-	/* Floating input pins retain a recent low level for a finite decay interval after an output stops pulling them down. */
-	pub last_pull_down: [u64; 8],
+	/* Floating inputs retain a driven high until its charge decays. */
+	pub last_driven_high: [u64; 8],
 	pub cassette_write: bool,
 	pub cassette_sense: bool,
 }
 
 impl CpuPort {
-	/* The integrated port starts with the direction, latch and pull-state values used by the 6510 reference machine. */
+	/* Reset clears DDR and DATA. The external C64 pull-ups establish the
+	 * initial banking state before the KERNAL programs the port
+	 * (CPU-PORT-MEASUREMENTS). */
 	pub fn new() -> Self {
 		let mut port = Self {
-			ddr: 0x2F,
-			latch_write: 0x37,
-			latch_committed: 0x37,
-			output: 0x37,
-			last_pull_down: [NEVER_PULLED_DOWN; 8],
+			ddr: 0,
+			latch_write: 0,
+			latch_committed: 0,
+			output: 0,
+			last_driven_high: [NEVER_DRIVEN_HIGH; 8],
 			cassette_write: true,
 			cassette_sense: true,
 		};
@@ -45,26 +47,27 @@ impl CpuPort {
 
 	/* Model-aware reset restores both CPU-visible registers and the internal pin-decay bookkeeping before recomputing the driven outputs. */
 	pub fn reset_for_model(&mut self, model: CpuModel) {
-		self.ddr = 0x2F;
-		self.latch_write = 0x37;
-		self.latch_committed = 0x37;
-		self.output = 0x37;
-		self.last_pull_down = [NEVER_PULLED_DOWN; 8];
+		self.ddr = 0;
+		self.latch_write = 0;
+		self.latch_committed = 0;
+		self.output = 0;
+		self.last_driven_high = [NEVER_DRIVEN_HIGH; 8];
 		self.cassette_write = true;
 		self.cassette_sense = true;
 		self.update_output_state(0, model);
 	}
 
 	#[inline(always)]
-	/* A driven low refreshes the decay timestamp; a driven high removes any residual low charge immediately. */
+	/* Driving high charges a floating pin; driving low discharges it.
+	 * Writing DATA while the pin is an input does neither. */
 	fn update_timestamps(&mut self, current_cycle: u64) {
 		let low_pins = !self.latch_committed & self.ddr;
 		let high_pins = self.latch_committed & self.ddr;
 		for i in 0..8 {
-			if (low_pins & (1 << i)) != 0 {
-				self.last_pull_down[i] = current_cycle;
-			} else if (high_pins & (1 << i)) != 0 {
-				self.last_pull_down[i] = NEVER_PULLED_DOWN;
+			if (high_pins & (1 << i)) != 0 {
+				self.last_driven_high[i] = current_cycle;
+			} else if (low_pins & (1 << i)) != 0 {
+				self.last_driven_high[i] = NEVER_DRIVEN_HIGH;
 			}
 		}
 	}
@@ -92,7 +95,7 @@ impl CpuPort {
 			0x0000 => self.ddr,
 			0x0001 => {
 				/*
-				The 6510 exposes P0-P5 only, so unconnected input bits 6 and 7 read low. The 8502 exposes an additional P6 line and therefore keeps bit 6 as a live input while bit 7 remains unused. A plain 6502 never reaches this integrated-port path because $0000/$0001 are forwarded to the system bus (CBM-HACKERS-6510-PORT-2000).
+				The 6510 exposes P0-P5 only. Unconnected inputs 6 and 7 read low after retained charge has decayed. The 8502 exposes an additional P6 line and therefore keeps bit 6 as a live input while bit 7 remains unused. A plain 6502 never reaches this integrated-port path because $0000/$0001 are forwarded to the system bus (CBM-HACKERS-6510-PORT-2000).
 				*/
 				let mut pins = match model {
 					CpuModel::Mos6502 => 0xFF,
@@ -111,9 +114,10 @@ impl CpuPort {
 				let input_mask = !self.ddr;
 				for i in 0..8 {
 					if (input_mask & (1 << i)) != 0 {
-						if matches!(i, 3 | 6 | 7) {
-							if current_cycle.wrapping_sub(self.last_pull_down[i]) < FADE_CYCLES {
-								pins &= !(1 << i);
+						if matches!(i, 3 | 6 | 7) && !(model == CpuModel::Mos8502 && i == 6) {
+							pins &= !(1 << i);
+							if current_cycle.wrapping_sub(self.last_driven_high[i]) < FADE_CYCLES {
+								pins |= 1 << i;
 							}
 						}
 					}

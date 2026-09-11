@@ -11,6 +11,14 @@ use crate::vic::constants::{
 /*
 Screen is the raster-domain output stage. It stores colour indices, foreground masks, collision masks and the final RGB framebuffer separately so border, foreground and sprite units can contribute in hardware order before the line is converted to host-visible pixels.
 */
+/* Sprite colour writes remain ordered in raster-dot coordinates until composition,
+so a sprite shifter can be evaluated ahead of or behind the colour output stage. */
+struct SpriteColourWrite {
+	pixel: usize,
+	slot: usize,
+	colour: u8,
+}
+
 pub struct Screen {
 	pub framebuffer:     Box<[u8; FRAMEBUFFER_SIZE]>,
 	pub line_buf:       [u8; LINE_BUF_LEN],
@@ -21,6 +29,9 @@ pub struct Screen {
 	border_bits:        [u8; BORDER_BITS_LEN],
 	pub bg_color:       [u8; 16],
 	resolved_bg:       [u8; 16],
+	colour_write: Option<(u16, usize, u8)>,
+	sprite_colours_at_line_start: [u8; 16],
+	sprite_colour_writes: Vec<SpriteColourWrite>,
 	resolved_palette:  [u32; 32],
 	has_visible_sprite: bool,
 	sprite_buffers_dirty: bool,
@@ -62,6 +73,9 @@ impl Screen {
 			border_bits:    [0u8; BORDER_BITS_LEN],
 			bg_color:       [0u8; 16],
 			resolved_bg:       [0u8; 16],
+			colour_write: None,
+			sprite_colours_at_line_start: [0; 16],
+			sprite_colour_writes: Vec::with_capacity(64),
 			resolved_palette:  build_resolved_palette(),
 			has_visible_sprite: false,
 			sprite_buffers_dirty: false,
@@ -79,6 +93,9 @@ impl Screen {
 		self.border_bits.fill(0);
 		self.bg_color.fill(0);
 		self.resolved_bg.fill(0);
+		self.sprite_colours_at_line_start.fill(0);
+		self.sprite_colour_writes.clear();
+		self.colour_write = None;
 		self.resolved_palette = build_resolved_palette();
 		self.has_visible_sprite = false;
 		self.sprite_buffers_dirty = false;
@@ -134,6 +151,9 @@ impl Screen {
 	*/
 	#[inline(always)]
 	pub fn begin_line(&mut self) {
+		self.sprite_colours_at_line_start = self.resolved_bg;
+		self.sprite_colour_writes.clear();
+		self.colour_write = None;
 		self.mask_buf.fill(0);
 		if self.compose_video {
 			self.line_buf.fill(BORDERCOLORINDEX);
@@ -151,9 +171,16 @@ impl Screen {
 	}
 
 	#[inline(always)]
-	/* Update both the raw VIC colour register and the pre-resolved palette slot used by deferred foreground pixels. */
-	pub fn set_background_colour(&mut self, index: usize, value: u8) {
+	/* Retain the colour present before the write while updating the register cache. The 6569 colour output keeps that value for the first dot of the following output slot. (6569-COLOUR-TIMING-MEASUREMENTS) */
+	pub fn set_background_colour(&mut self, index: usize, value: u8, cycle: u16) {
+		self.colour_write = Some((cycle, index, self.resolved_bg[index]));
 		let colour = value & 0x0F;
+		/* Sprite colour selection uses the same delayed output aperture as the
+		background, even when the sprite pixels have already been shifted. */
+		if (4..14).contains(&index) {
+			let pixel = (cycle as isize * 8 - 11).max(0) as usize;
+			self.sprite_colour_writes.push(SpriteColourWrite { pixel, slot: index, colour });
+		}
 		self.bg_color[index] = value;
 		self.resolved_bg[index] = colour;
 		self.resolved_palette[index + 16] = palette_u32(colour as usize);
@@ -164,17 +191,23 @@ impl Screen {
 	*/
 	#[inline(always)]
 	pub fn color_foreground(&mut self, cycle: u16) {
-		if !self.compose_video || cycle < 10 || cycle > 62 {
+		if !self.compose_video || cycle < 10 || cycle > 64 {
 			return;
 		}
 		let base = cycle as usize * 8 - 20;
+		let pending = self.colour_write.take();
 		let pixels = &mut self.line_buf[base..base + 8];
 		let colours = self.resolved_bg;
 		let mut index = 0;
 		while index < 8 {
 			let value = pixels[index];
 			if value & 0x80 != 0 {
-				pixels[index] = colours[(value & 0x0F) as usize];
+				let slot = (value & 0x0F) as usize;
+				pixels[index] = match pending {
+					Some((written_cycle, written_slot, previous))
+						if index == 0 && written_cycle + 1 == cycle && written_slot == slot => previous,
+					_ => colours[slot],
+				};
 			}
 			index += 1;
 		}
@@ -218,7 +251,7 @@ impl Screen {
 		if y >= TOTAL_HEIGHT {
 			return;
 		}
-		let buffered_width = (LINE_BUF_LEN - DISPLAY_START).min(TOTAL_WIDTH);
+		let buffered_width = TOTAL_WIDTH;
 		let visible_end = DISPLAY_START + buffered_width;
 		let foreground = &self.line_buf[DISPLAY_START..visible_end];
 		let row_start = y * TOTAL_WIDTH * 3;
@@ -228,7 +261,7 @@ impl Screen {
 		let resolved_palette = self.resolved_palette;
 
 		let mut pixel = 0;
-		while pixel + 2 <= buffered_width {
+		while pixel + 2 < buffered_width {
 			let value0 = foreground[pixel];
 			let value1 = foreground[pixel + 1];
 			let slot0 = ((value0 & 0x0F) | ((value0 >> 3) & 0x10)) as usize;
@@ -251,7 +284,6 @@ impl Screen {
 			pixel += 1;
 		}
 
-		framebuffer[buffered_width * 3..].fill(0);
 	}
 
 	#[inline]
@@ -260,7 +292,7 @@ impl Screen {
 		if y >= TOTAL_HEIGHT {
 			return;
 		}
-		let buffered_width = (LINE_BUF_LEN - DISPLAY_START).min(TOTAL_WIDTH);
+		let buffered_width = TOTAL_WIDTH;
 		let visible_end = DISPLAY_START + buffered_width;
 		let foreground = &self.line_buf[DISPLAY_START..visible_end];
 		let sprites = &self.sprite_line[DISPLAY_START..visible_end];
@@ -269,6 +301,8 @@ impl Screen {
 		let row_end = row_start + TOTAL_WIDTH * 3;
 		let framebuffer = &mut self.framebuffer[row_start..row_end];
 		let background_colours = self.bg_color;
+		let mut sprite_colours = self.sprite_colours_at_line_start;
+		let mut colour_writes = self.sprite_colour_writes.iter().peekable();
 		let mut mask_byte_index = (DISPLAY_START + 4) >> 3;
 		let mut mask = 1u8 << (7 - ((DISPLAY_START + 4) & 7));
 		let mut border_byte_index = DISPLAY_START >> 3;
@@ -279,6 +313,11 @@ impl Screen {
 			let mut packed = [0u8; 8];
 			let mut lane = 0;
 			while lane < 2 && pixel < buffered_width {
+				while colour_writes.peek().is_some_and(|write| write.pixel <= pixel + DISPLAY_START) {
+					if let Some(write) = colour_writes.next() {
+						sprite_colours[write.slot] = write.colour;
+					}
+				}
 				let foreground_opaque = self.mask_buf[mask_byte_index] & mask != 0;
 				let border_here = self.border_bits[border_byte_index] & border_mask != 0;
 				let sprite = sprites[pixel];
@@ -287,7 +326,11 @@ impl Screen {
 					&& (!priorities[pixel] || !foreground_opaque);
 				let value = if sprite_visible { sprite } else { foreground[pixel] };
 				let colour = if value & 0x80 != 0 {
-					background_colours[(value & 0x0F) as usize] & 0x0F
+					if sprite_visible {
+						sprite_colours[(value & 0x0F) as usize]
+					} else {
+						background_colours[(value & 0x0F) as usize] & 0x0F
+					}
 				} else {
 					value & 0x0F
 				};
@@ -310,10 +353,10 @@ impl Screen {
 				lane += 1;
 			}
 			let output = (pixel - lane) * 3;
-			framebuffer[output..output + 8].copy_from_slice(&packed);
+			let count = (framebuffer.len() - output).min(packed.len());
+			framebuffer[output..output + count].copy_from_slice(&packed[..count]);
 		}
 
-		framebuffer[buffered_width * 3..].fill(0);
 	}
 
 }

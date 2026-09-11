@@ -36,7 +36,6 @@ pub struct ViaChip {
 	pub t2_running: bool,
 	pub t2_interrupt_issued: bool,
 	pub(crate) t2_zero_pending: bool,
-	pub(crate) t2_low_byte_wraps: u8,
 	pub(crate) t2_shift_clock_high: bool,
 	pub(crate) t2_shift_edge: bool,
 	pub(crate) t2_pulse_count_mode_previous: bool,
@@ -90,7 +89,6 @@ impl ViaChip {
 			t2_running: false,
 			t2_interrupt_issued: false,
 			t2_zero_pending: false,
-			t2_low_byte_wraps: 0,
 			t2_shift_clock_high: true,
 			t2_shift_edge: false,
 			t2_pulse_count_mode_previous: false,
@@ -357,7 +355,11 @@ impl ViaChip {
 				self.t1_start_delay = true;
 				self.t1_running = true;
 				self.t1_one_shot_complete = false;
-				self.t1_reload_pending = self.t1_counter == 0;
+				/* Writing T1C-H starts one latch transfer. A zero load does
+				not also schedule an underflow reload; that belongs to the
+				later decrement. (MOS-6522-DATASHEET, figure 14;
+				VIA-HARDWARE-DIAGNOSTICS) */
+				self.t1_reload_pending = false;
 				self.t1_interrupts_enabled = true;
 				self.clear_flag(VIA_IFR_T1);
 				if (self.acr & 0x80) != 0 {
@@ -379,7 +381,6 @@ impl ViaChip {
 				self.t2_running = true;
 				self.t2_interrupt_issued = false;
 				self.t2_zero_pending = false;
-				self.t2_low_byte_wraps = 0;
 				self.t2_shift_clock_high = true;
 				self.t2_shift_edge = false;
 				self.clear_flag(VIA_IFR_T2);
@@ -395,7 +396,16 @@ impl ViaChip {
 				self.t2_shift_edge = false;
 				self.clear_flag(VIA_IFR_SR);
 			}
-			0x0B => self.acr = val,
+			0x0B => {
+				/* Selecting timer output establishes its idle high level;
+				a subsequent T1 load drives it low. This also applies when
+				the timer was loaded before PB7 was selected.
+				(VIA-HARDWARE-DIAGNOSTICS, via10 through via14) */
+				if self.acr & 0x80 == 0 && val & 0x80 != 0 {
+					self.pb7 = true;
+				}
+				self.acr = val;
+			}
 			0x0C => {
 				self.pcr = val;
 				self.update_ca2_output();

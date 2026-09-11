@@ -6,7 +6,7 @@
 
 use super::constants::{
 	COMBINED_WAVEFORM_MSB_CLEAR_MASK, NEVER, NOISE_EVENT_MASK, NOISE_MASK, NOISE_OUTPUT_TAPS,
-	NOISE_RESET_VALUE, NOISE_TEST_CHARGE_MAX, NOISE_TEST_LEAK_INTERVAL_CYCLES,
+	NOISE_RESET_VALUE, NOISE_PULSE_CHARGE_DIVISOR, NOISE_PULSE_TRANSFER_RETAINED_LINES, NOISE_TEST_CHARGE_MAX, NOISE_TEST_LEAK_INTERVAL_CYCLES,
 	NOISE_TEST_LOGIC_THRESHOLD, PHASE_MASK, PHASE_RESET_VALUE, SYNC_EVENT_MASK,
 	WAVEFORM_FLOAT_CHARGE_MAX, WAVEFORM_FLOAT_HOLD_CYCLES, WAVEFORM_FLOAT_LEAK_INTERVAL_CYCLES,
 	WAVEFORM_FLOAT_THRESHOLD, WAVEFORM_MASK, WAVEFORM_PIPELINE_RESET_VALUE,
@@ -72,6 +72,9 @@ struct NoiseGenerator {
 	captured_charge: [u16; 23],
 
 	transfer_at: u64,
+	/* The oscillator-clocked shift has an open sampling phase followed
+	 * by a closing phase. Shared-pulse loading can reach both phases. */
+	normal_transfer_at: u64,
 
 	charge: [u16; 23],
 
@@ -81,13 +84,20 @@ struct NoiseGenerator {
 impl NoiseGenerator {
 	const fn new() -> Self {
 		let state = NOISE_RESET_VALUE & NOISE_MASK;
+		let mut charge = [0; 23];
+		let mut i = 0;
+		while i < 23 {
+			charge[i] = if state & (1 << i) != 0 { NOISE_TEST_CHARGE_MAX } else { 0 };
+			i += 1;
+		}
 		Self {
 			state,
 			visible: Self::project(state),
 			captured: state,
-			captured_charge: [NOISE_TEST_CHARGE_MAX; 23],
+			captured_charge: charge,
 			transfer_at: NEVER,
-			charge: [NOISE_TEST_CHARGE_MAX; 23],
+			normal_transfer_at: NEVER,
+			charge,
 			next_leak: NEVER,
 		}
 	}
@@ -96,14 +106,8 @@ impl NoiseGenerator {
 	fn enter_test(&mut self, cycle: u64) {
 		self.captured = self.state;
 		self.transfer_at = NEVER;
+		self.normal_transfer_at = NEVER;
 
-		for (stage, charge) in self.charge.iter_mut().enumerate() {
-			*charge = if self.state & (1u32 << stage) == 0 {
-				0
-			} else {
-				NOISE_TEST_CHARGE_MAX
-			};
-		}
 		self.captured_charge = self.charge;
 		self.next_leak = cycle.wrapping_add(u64::from(NOISE_TEST_LEAK_INTERVAL_CYCLES));
 	}
@@ -118,8 +122,12 @@ impl NoiseGenerator {
 		}
 		self.state = sampled & NOISE_MASK;
 		self.visible = Self::project(self.state);
-		self.captured = self.state;
+		/* TEST drives the feedback input corresponding to physical bit 22
+		 * high during the first shift phase. The release transfer therefore
+		 * inserts the inverse of physical bit 17 (SID-SCHEMATICS-NOISE). */
+		self.captured = self.state | 1;
 		self.captured_charge = self.charge;
+		self.captured_charge[0] = NOISE_TEST_CHARGE_MAX;
 		self.transfer_at = cycle.wrapping_add(1);
 		self.next_leak = NEVER;
 	}
@@ -133,6 +141,7 @@ impl NoiseGenerator {
 		self.captured = self.state;
 		self.captured_charge = self.charge;
 		self.transfer_at = cycle.wrapping_add(2);
+		self.normal_transfer_at = self.transfer_at;
 	}
 
 	#[inline]
@@ -205,6 +214,18 @@ impl NoiseGenerator {
 		}
 	}
 
+	/* Under TEST the feedback gates are open. A grounded waveform coupled
+	 * through the shared pulse node discharges the isolated stage charge;
+	 * short pulses retain a partial charge for the following transfer. */
+	fn load_pulse_coupling(&mut self, waveform: u16) {
+		for (line, &stage) in NOISE_OUTPUT_TAPS.iter().enumerate() {
+			if waveform & (1 << (11-line)) == 0 {
+				let q = &mut self.charge[stage as usize];
+				*q = q.saturating_sub((*q / NOISE_PULSE_CHARGE_DIVISOR).max(1));
+			}
+		}
+	}
+
 	#[inline]
 	fn pull_down(&mut self, waveform: u16, cycle: u64) {
 		let affects_capture =
@@ -217,14 +238,9 @@ impl NoiseGenerator {
 			}
 
 			let index = usize::from(stage);
-			let charge = self.charge[index];
-			let decrement = (charge / 12).max(1);
-			self.charge[index] = charge.saturating_sub(decrement);
-
+			self.charge[index] = 0;
 			if affects_capture {
-				let captured_charge = self.captured_charge[index];
-				let captured_decrement = (captured_charge / 12).max(1);
-				self.captured_charge[index] = captured_charge.saturating_sub(captured_decrement);
+				self.captured_charge[index] = 0;
 			}
 
 			if self.charge[index] < NOISE_TEST_LOGIC_THRESHOLD {
@@ -373,7 +389,7 @@ impl Oscillator {
 		}
 	}
 
-	/* Reset clears phase, control and retained waveform charge together so OSC3 and future combined-waveform evaluation restart from a defined digital state. */
+	/* RESET clears the controls while preserving the phase accumulator. Only TEST resets oscillator phase (SID-POWER-UP-MEASUREMENTS). */
 	pub fn reset(&mut self) {
 		let preserved = self.accumulator;
 		*self = Self::new();
@@ -423,6 +439,18 @@ impl Oscillator {
 			self.reset_phase();
 			self.noise.enter_test(self.cycle);
 		} else if old_test && !self.test_enabled {
+			/* A driver which remains connected across the control write
+			 * loads the open shift latch before TEST closes it. */
+			let continuous_drivers = old_wave & self.waveform;
+			if continuous_drivers & 8 != 0 {
+				if continuous_drivers & 3 != 0 {
+					self.noise.pull_down(self.last_sample, self.cycle);
+				} else if continuous_drivers & 4 != 0 && old_wave & 3 != 0 {
+					/* The shared pulse node retains the low-line discharge
+					 * while the grounded oscillator driver disconnects. */
+					self.noise.pull_down(self.last_sample | NOISE_PULSE_TRANSFER_RETAINED_LINES, self.cycle);
+				}
+			}
 			self.noise.leave_test(self.cycle);
 		}
 	}
@@ -499,7 +527,13 @@ impl Oscillator {
 		let latched = output & WAVEFORM_MASK;
 		let sel = WaveformSelect::from_raw(self.waveform);
 
-		if self.noise_is_driven(sel) {
+		if self.test_enabled && sel.raw() & 0x0c == 0x0c && sel.raw() & 3 != 0 {
+			self.noise.load_pulse_coupling(latched);
+		}
+		let pulse_load_aperture = self.noise.normal_transfer_at != NEVER
+			&& self.cycle <= self.noise.normal_transfer_at
+			&& self.cycle.wrapping_add(1) >= self.noise.normal_transfer_at;
+		if self.noise_is_driven(sel) && (sel.raw() != 0x0c || pulse_load_aperture) {
 			self.noise.pull_down(latched, self.cycle);
 		}
 
@@ -556,7 +590,12 @@ impl Oscillator {
 
 		let ideal = sel.combine(triangle, saw, pulse, noise, self.last_sample);
 
-		if cache.needs_line_loading(sel.raw()) {
+		/* Triangle/noise uses the connected digital drivers. Pulse/noise
+		 * retains the loaded line code for OSC3, while latch feedback is
+		 * admitted only during the noise transfer aperture. */
+		if sel.raw() == 0x09 {
+			ideal & WAVEFORM_MASK
+		} else if cache.needs_line_loading(sel.raw()) {
 			cache.apply_line_loading(sel.raw(), ideal) & WAVEFORM_MASK
 		} else {
 			ideal & WAVEFORM_MASK

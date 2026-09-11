@@ -30,7 +30,7 @@ impl TimerBInputMode {
 
 /* The core owns register-visible state and pin history; board-specific wiring is layered by Cia1 and Cia2.
 
-The interrupt pipeline has four distinct stages. Sources are latched in icr as soon as they occur. Newly raised enabled sources enter irq_stage_now before progressing to irq_stage_next. Unmasking a source that is already latched in ICR bypasses irq_stage_now and enters irq_stage_next directly, so it still waits one cycle before IRQ can be asserted. Reading ICR lowers the line immediately and records the visible source bits in icr_ack. Those acknowledged bits remain present until the following tick applies icr_clear_next, allowing events already in flight to retain their cycle ordering. */
+The interrupt pipeline has four distinct stages. Sources are latched in icr as soon as they occur. Newly raised enabled sources enter irq_stage_now and assert IRQ on the next tick. Unmasking an already latched source enters irq_stage_next, which advances to irq_stage_now before asserting IRQ. The pending request is independent of the readable source bits: a Timer B acknowledgement collision can clear its flag without cancelling the IRQ request. Reading ICR lowers the line immediately and records the visible source bits in icr_ack. Qualified IR remains visible for the next readback cycle without reasserting the pin. Those acknowledged bits remain present until the following tick applies icr_clear_next, allowing events already in flight to retain their cycle ordering. */
 pub struct Cia {
 	pub ta: Timer,
 	pub tb: Timer,
@@ -43,6 +43,14 @@ pub struct Cia {
 	pub icr: u8,
 	pub icr_mask: u8,
 	pub irq_line: bool,
+	/* IR remains visible on the readback path for the acknowledgement
+	 * cycle, independently of the released IRQ pin. */
+	pub icr_ir_readback: bool,
+	/* Qualified IR sampled before the preceding read cancelled IRQ. */
+	pub icr_ir_readback_next: bool,
+	/* ICR write selection is retained across adjacent bus cycles. */
+	pub icr_write_active: bool,
+	pub icr_write_previous: bool,
 	/* Enabled sources eligible to assert IRQ during the current tick. */
 	pub irq_stage_now: u8,
 	/* Enabled sources deferred until the following pipeline stage. */
@@ -71,13 +79,17 @@ impl Cia {
 				..TimeOfDay::default()
 			},
 			sdr: SerialShiftRegister::default(),
-			pra: 0xFF,
-			prb: 0xFF,
+			pra: 0x00,
+			prb: 0x00,
 			ddra: 0,
 			ddrb: 0,
 			icr: 0,
 			icr_mask: 0,
 			irq_line: false,
+			icr_ir_readback: false,
+			icr_ir_readback_next: false,
+			icr_write_active: false,
+			icr_write_previous: false,
 			irq_stage_now: 0,
 			irq_stage_next: 0,
 			icr_ack: 0,
@@ -109,7 +121,7 @@ impl Cia {
 	#[inline(always)]
 	/* Alarm matching is checked after every TOD write as well as after a clock increment, so software can trigger the alarm by programming the compared value. */
 	fn compare_tod_alarm(&mut self) {
-		if self.tod.current_val == self.tod.alarm {
+		if self.tod.compare_alarm() {
 			self.raise_source(ICR_ALRM);
 		}
 	}
@@ -117,6 +129,15 @@ impl Cia {
 	#[inline(always)]
 	/* Deferred ICR clearing and IRQ staging keep register accesses, source latching and pin changes ordered across host cycles. The idle exit is taken only when no state machine or external edge can change visible CIA state. */
 	pub fn tick(&mut self, tod_pulse: bool) -> bool {
+		/* Consecutive ICR reads can observe qualified IR after the first
+		 * read has released IRQ (CIA-ICR-MEASUREMENTS). */
+		self.icr_write_previous = self.icr_write_active;
+		self.icr_write_active = false;
+		self.icr_ir_readback = self.icr_ir_readback_next;
+		self.icr_ir_readback_next = false;
+		/* Timer B source clearing uses the preceding read strobe
+		 * (CIA-TIMER-B-MEASUREMENTS). */
+		let acknowledge_cycle = self.icr_clear_next;
 		if self.icr_clear_next {
 			self.icr &= !self.icr_ack;
 			self.icr_ack = 0;
@@ -126,7 +147,7 @@ impl Cia {
 		let irq_due = self.irq_stage_now;
 		self.irq_stage_now = self.irq_stage_next;
 		self.irq_stage_next = 0;
-		if (irq_due & self.icr & 0x1F) != 0 {
+		if irq_due != 0 {
 			self.irq_line = true;
 		}
 
@@ -144,6 +165,7 @@ impl Cia {
 			&& self.ta.is_idle()
 			&& self.tb.is_idle()
 			&& !self.sdr.shifting
+			&& self.sdr.irq_delay == 0
 			&& !flag_falling
 			&& !tod_pulse
 			&& !cnt_rising
@@ -180,7 +202,8 @@ impl Cia {
 			false
 		};
 
-		if self.sdr.input_mode && cnt_rising && !self.sdr.shifting {
+		if self.sdr.input_mode && cnt_rising && !self.sdr.shifting
+			&& self.sdr.irq_delay == 0 {
 			self.sdr.start_input();
 		}
 
@@ -211,6 +234,11 @@ impl Cia {
 
 		if pending != 0 {
 			self.raise_source(pending);
+		}
+		/* Acknowledge wins for the readable Timer B flag, but the enabled
+		 * event has already entered the independent IRQ path. */
+		if tb_uf && acknowledge_cycle {
+			self.icr &= !ICR_TB;
 		}
 
 		self.irq_line
@@ -257,7 +285,7 @@ impl Cia {
 				}
 			}
 			SDR => self.sdr.data,
-			ICR => (self.icr & 0x1F) | if self.irq_line { ICR_IR } else { 0 },
+			ICR => (self.icr & 0x1F) | if self.irq_line || self.icr_ir_readback { ICR_IR } else { 0 },
 			CRA => self.ta.cr,
 			CRB => self.tb.cr,
 			_ => 0xFF,
@@ -307,7 +335,8 @@ impl Cia {
 			/* Reading ICR lowers the external IRQ immediately, but source bits are cleared on the following tick so events already in flight can still be ordered correctly. */
 			ICR => {
 				let visible = self.icr & 0x1F;
-				let val = visible | if self.irq_line { ICR_IR } else { 0 };
+				let val = visible | if self.irq_line || self.icr_ir_readback { ICR_IR } else { 0 };
+				self.icr_ir_readback_next = self.irq_line || self.irq_stage_now != 0;
 				self.icr_ack |= visible;
 				self.icr_clear_next = true;
 				self.irq_line = false;
@@ -338,6 +367,10 @@ impl Cia {
 					self.tod.alarm = (self.tod.alarm & !0x0000_00FF) | (val & 0x0F) as u32;
 				} else {
 					self.tod.tenths = val & 0x0F;
+					/* Restarting a stopped clock also restarts its mains-frequency divider; a write while running preserves the divider phase (CIA-TOD-MEASUREMENTS, hzsync0 and hzsync1). */
+					if !self.tod.running {
+						self.tod.divider = 0;
+					}
 					self.tod.running = true;
 					self.tod.pack_current();
 				}
@@ -384,7 +417,16 @@ impl Cia {
 					self.icr_mask |= val & 0x7F;
 				} else {
 					self.icr_mask &= !(val & 0x7F);
+					/* During adjacent ICR writes, the second mask value can
+					 * cancel a request still in flight. An isolated mask write
+					 * preserves an already qualified request; neither releases
+					 * an asserted pin (CIA-ICR-MEASUREMENTS). */
+					if self.icr_write_previous {
+						self.irq_stage_now &= self.icr_mask;
+						self.irq_stage_next &= self.icr_mask;
+					}
 				}
+				self.icr_write_active = true;
 				let enabled = self.icr & self.icr_mask & 0x1F;
 				if enabled != 0 && !self.irq_line {
 					self.irq_stage_next |= enabled;
@@ -421,7 +463,7 @@ impl Cia {
 		self.flag_pin = state;
 	}
 	pub fn serial_output_active(&self) -> bool {
-		(self.ta.cr & CRA_SPMODE) != 0 && self.sdr.shifting
+		(self.ta.cr & CRA_SPMODE) != 0
 	}
 	pub fn sp_output(&self) -> bool {
 		if self.serial_output_active() {

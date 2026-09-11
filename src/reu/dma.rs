@@ -37,8 +37,10 @@ pub(crate) enum SwapPhase {
 }
 
 /*
- * Swap needs two C64 bus grants for each byte.  The latch retains the displaced
- * REU byte between those grants.  Other transfer types always remain in the
+ * Swap needs two C64 bus grants for each byte. The latch retains the displaced
+ * REU byte until the C64 write is accepted; an interrupted pair can retry without
+ * losing that byte. Recall uses the same latch for startup data retained across
+ * BA. Other transfer types always remain in the
  * ReadC64 phase, whose name reflects the first phase of a swap rather than a
  * universal read operation.
  */
@@ -53,6 +55,10 @@ pub(crate) struct DmaState {
 	pub(crate) autoload: bool,
 	pub(crate) swap_phase: SwapPhase,
 	pub(crate) latch: u8,
+	/* Startup has no preceding completed pair to drain during a BA warning. */
+	pub(crate) first_byte: bool,
+	pub(crate) read_clock_odd: bool,
+	pub(crate) verify_tail: bool,
 }
 
 impl DmaState {
@@ -65,6 +71,7 @@ impl DmaState {
 	 */
 	pub(crate) fn complete_byte(&mut self) -> bool {
 		self.swap_phase = SwapPhase::ReadC64;
+		self.first_byte = false;
 		if !self.fix_c64 {
 			self.c64_addr = self.c64_addr.wrapping_add(1);
 		}

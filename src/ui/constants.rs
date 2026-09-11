@@ -51,7 +51,7 @@ pub(crate) const COLOR_REVERSE_FG: u32 = 0xFFFFFFFF;
 pub(crate) const COLOR_TRANSPORT_ON: u32 = 0xFF000000;
 pub(crate) const COLOR_TRANSPORT_OFF: u32 = 0xFFAAAAAA;
 /* Host input thresholds and audio queue geometry define presentation services rather than emulated hardware timing. */
-pub(crate) const WINDOW_TITLE: &str = "Breadbin466 0.12 – PAL Assy 250466 Commodore 64 emulator";
+pub(crate) const WINDOW_TITLE: &str = "Breadbin466 0.12.1 – PAL Assy 250466 Commodore 64 emulator";
 pub(crate) const THRESHOLD: f32 = 0.4;
 #[cfg(not(target_os = "windows"))]
 pub(crate) const AUDIO_SAMPLE_RATE: u32 = 44_100;
@@ -76,7 +76,7 @@ pub(crate) const OSD_BUFFER_SCALE: usize = 2;
 pub(crate) const OSD_TRANSPORT_COUNT: usize = 6;
 /* Application identity strings are shared by native About implementations and packaging metadata. */
 pub const APP_NAME: &str = "Breadbin466";
-pub const VERSION: &str = "0.12";
+pub const VERSION: &str = "0.12.1";
 pub const COPYRIGHT: &str = "Copyright © 2025–2026 The Breadbin466 Team";
 pub const DESCRIPTION_PARAGRAPHS: [&str; 3] = [
 	"Breadbin466 is a cycle-accurate Commodore 64 emulator written from scratch in Rust.",

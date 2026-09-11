@@ -19,6 +19,7 @@ pub struct DriveBus {
 	drive: DiskMechanism,
 	dos_rom: Box<[u8; DOS_ROM_SIZE]>,
 	so_line: bool,
+	data_bus: u8,
 }
 
 impl DriveBus {
@@ -31,6 +32,7 @@ impl DriveBus {
 			drive: DiskMechanism::new(),
 			dos_rom: Box::new(*DOS_ROM),
 			so_line: false,
+			data_bus: 0,
 		}
 	}
 
@@ -166,22 +168,31 @@ impl DriveBus {
 
 impl SystemBus for DriveBus {
 	#[inline(always)]
-	/* Address decoding mirrors the 1541 board: RAM is repeated in the low region, the VIAs occupy their decoded windows, and DOS ROM fills the upper half. */
+	/* A15 selects ROM; below it, A13 and A14 are absent from the RAM/VIA decoder, so the 8 KiB selection pattern repeats four times. Only the first 2 KiB select RAM. Unselected reads retain the last driven data byte, including the preceding 6502 dummy read. The decoder follows Commodore service manual PN-314002-01, Microprocessor Control of RAM and ROM; retained reads are exercised by the openbus diagnostics measured on an original 1541. (COMMODORE-1541-SERVICE-MANUAL) */
 	fn read(&mut self, addr: u16, _cycle: u64) -> u8 {
-		match addr {
-			0x0000..=0x17FF => self.ram[(addr & 0x07FF) as usize],
-			0x1800..=0x1BFF => self.via1.read(0x1800 | (addr & 0x000F)),
-			0x1C00..=0x1FFF => self.via2.read(0x1C00 | (addr & 0x000F)),
-			0x8000..=0xFFFF => self.dos_rom[(addr & 0x3FFF) as usize],
-			_ => 0,
-		}
+		let value = if addr & 0x8000 != 0 {
+			self.dos_rom[(addr & 0x3FFF) as usize]
+		} else {
+			match addr & 0x1FFF {
+				0x0000..=0x07FF => self.ram[(addr & 0x07FF) as usize],
+				0x1800..=0x1BFF => self.via1.read(0x1800 | (addr & 0x000F)),
+				0x1C00..=0x1FFF => self.via2.read(0x1C00 | (addr & 0x000F)),
+				_ => self.data_bus,
+			}
+		};
+		self.data_bus = value;
+		value
 	}
 
 	#[inline(always)]
-	/* Writes reach only RAM or a selected VIA. ROM space absorbs writes without creating a convenience backdoor into the firmware image. */
+	/* The CPU drives the data bus on every write, including unselected addresses. The same low-address decoder selects RAM and VIA registers for reads and writes. */
 	fn write(&mut self, addr: u16, value: u8, cycle: u64) {
-		match addr {
-			0x0000..=0x17FF => self.ram[(addr & 0x07FF) as usize] = value,
+		self.data_bus = value;
+		if addr & 0x8000 != 0 {
+			return;
+		}
+		match addr & 0x1FFF {
+			0x0000..=0x07FF => self.ram[(addr & 0x07FF) as usize] = value,
 			0x1800..=0x1BFF => self.via1.write(0x1800 | (addr & 0x000F), value, cycle),
 			0x1C00..=0x1FFF => self.via2.write(0x1C00 | (addr & 0x000F), value),
 			_ => {}

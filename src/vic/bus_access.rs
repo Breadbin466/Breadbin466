@@ -29,6 +29,18 @@ pub(super) fn floating_bus_read(memory: &mut Memory, bank: u8, cycle: u64, aec_l
 }
 
 impl VicII {
+	/* Sprite DMA activation at cycles 55 and 56 follows the PHI1 read window.
+	 * Preserve the preceding channel enables for that window; established sprite
+	 * requests and badline requests already participate in arbitration. */
+	pub fn ba_high_at_phi1(&self) -> bool {
+		let dma = if matches!(self.timing.cycle, 55 | 56) {
+			self.sprites.sprite_dma_previous
+		} else {
+			self.sprites.sprite_dma
+		};
+		!self.timing.ba_out.is_active() && (dma & sprite_dma_ba_mask(self.timing.cycle)) == 0
+	}
+
 	#[inline(always)]
 	/*
 	BA combines badline and sprite requests. AEC follows only after three low-BA cycles, modelling the warning interval that lets the 6510 finish write cycles before the VIC takes the bus. (BAUER-VIC-II-1996, memory access timing)
@@ -61,16 +73,27 @@ impl VicII {
 			return;
 		}
 		let index = self.vmli as usize % 40;
-		/* When the VIC owns the bus, screen RAM supplies the low byte and the separate four-bit colour RAM supplies the upper nibble. Before AEC falls, the displaced c-access instead captures the CPU's next opcode pattern, reproducing the bus contamination visible to the matrix pipeline. */
+		/* When the VIC owns the bus, screen RAM supplies the low byte and the separate four-bit colour RAM supplies the upper nibble. Before AEC falls, the low byte is undriven while U16 connects CPU D0-D3 to the VIC colour inputs. The motherboard completes that capture after the CPU bus phase. (BAUER-VIC-II-1996, section 3.14.6) */
 		let value = if self.aec_counter < 0 {
 			let offset = self.vc & VIDEO_COUNTER_MASK;
 			let matrix_byte = vic_read(memory, vm_base.wrapping_add(offset), bank, master_cycle);
 			let colour = read_color_ram(memory, 0xD800u16.wrapping_add(offset)) & 0x0F;
 			((colour as u16) << 8) | matrix_byte as u16
 		} else {
-			(((self.cpu_next_op_code & 0x0F) as u16) << 8) | 0x00FF
+			self.pending_character_access = Some(index);
+			return;
 		};
 		self.matrix_line[index] = value;
+	}
+
+	/* A displaced c-access cannot sample its colour nibble until the current
+	CPU transfer has driven the shared bus. Deferring only the matrix write keeps
+	the next g-access aligned with the character entry just captured. */
+	#[inline(always)]
+	pub fn complete_character_access(&mut self, cpu_bus_value: u8) {
+		if let Some(index) = self.pending_character_access.take() {
+			self.matrix_line[index] = (u16::from(cpu_bus_value & 0x0F) << 8) | 0x00FF;
+		}
 	}
 
 	#[inline(always)]
@@ -115,7 +138,10 @@ impl VicII {
 			self.sprites.slot_data(index, 0, memory, bank, cycle, self.aec_low, false);
 			return;
 		}
-		let byte_1 = floating_bus_read(memory, bank, cycle, self.aec_low);
+		/* PHI1 belongs to the VIC even when the CPU retains PHI2.
+		 * An inactive sprite therefore still drives its idle-read byte
+		 * onto the shared bus during the first half-cycle. */
+		let byte_1 = vic_read(memory, IDLE_ACCESS_ADDRESS, bank, cycle);
 		let byte_0 = floating_bus_read(memory, bank, cycle, self.aec_low);
 		let sprite = &mut self.sprites.sprites[index];
 		sprite.fetch_buf[1] = byte_1;

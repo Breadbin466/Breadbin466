@@ -20,30 +20,29 @@ impl DiskMechanism {
 		let bit = (self.tracks[track_index][self.byte_pos] >> (7 - self.bit_pos)) & 1;
 		bit != 0
 	}
-	pub(super) fn initialise_empty_g64_track(&mut self, track_index: usize, density: u8) -> bool {
-		if self.format != Some(DiskFormat::G64) || track_index >= self.tracks.len() {
+	/* The write head can magnetise an unformatted track regardless of
+	the mounted container format. Container limits affect persistence,
+	not the serial write channel. */
+	pub(super) fn initialise_empty_track(&mut self, track_index: usize, density: u8) -> bool {
+		if self.format.is_none() || track_index >= self.tracks.len() {
 			return false;
 		}
 
 		let nominal_length = NOMINAL_TRACK_BYTES[density as usize];
-		let track_length = nominal_length.min(self.max_track_size_g64);
+		let track_length = if self.format == Some(DiskFormat::G64) {
+			nominal_length.min(self.max_track_size_g64)
+		} else {
+			nominal_length
+		};
 		if track_length == 0 {
 			return false;
 		}
 
-		let bit_length = track_length.saturating_mul(8);
-		let bit_position = self
-			.byte_pos
-			.saturating_mul(8)
-			.saturating_add(self.bit_pos as usize)
-			% bit_length;
 		self.tracks[track_index] = vec![0; track_length];
 		if let Some(speed) = self.track_speed.get_mut(track_index) {
 			*speed = TrackSpeed::Constant(density);
 		}
-		self.byte_pos = bit_position / 8;
-		self.bit_pos = (bit_position % 8) as u8;
-		self.phase_track_length = track_length;
+		self.refresh_phase_track_metadata();
 		true
 	}
 	#[inline(always)]

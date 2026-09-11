@@ -76,7 +76,10 @@ impl Via1 {
 	/* Port B is assembled from resolved IEC levels and board jumpers before DDR masking, matching the fact that these signals exist outside the VIA. */
 	fn compose_input_b(&self) -> u8 {
 		let (atn_low, clk_low, data_low) = self.bus_levels();
-		let mut value = self.jumper_bits();
+		/* PB1, PB3 and PB4 drive the IEC gate inputs. When released, their
+		pull-ups remain visible to the input buffers. (MOS-6522-DATASHEET,
+		figure 3; COMMODORE-1541-SERVICE-MANUAL) */
+		let mut value = self.jumper_bits() | 0x1A;
 		if data_low {
 			value |= 0x01;
 		}

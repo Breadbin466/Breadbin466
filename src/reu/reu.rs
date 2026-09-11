@@ -50,6 +50,13 @@ pub struct Reu {
 	pub(crate) shadow_len: usize,
 	pub(crate) dma: Option<DmaState>,
 	pub(crate) waiting_ff00: bool,
+	ba_was_high: bool,
+	swap_read_delay: u8,
+	recall_repeat: bool,
+	terminal_swap_write: bool,
+	late_ba_fall: bool,
+	swap_refresh: bool,
+	swap_release_pending: bool,
 }
 
 impl Reu {
@@ -64,6 +71,13 @@ impl Reu {
 			shadow_len: 0,
 			dma: None,
 			waiting_ff00: false,
+			ba_was_high: true,
+			swap_read_delay: 0,
+			recall_repeat: false,
+			terminal_swap_write: false,
+			late_ba_fall: false,
+			swap_refresh: false,
+			swap_release_pending: false,
 		};
 		reu.reset_registers();
 		reu
@@ -97,6 +111,13 @@ impl Reu {
 		self.waiting_ff00 = false;
 		self.irq_pending = false;
 		self.reset_registers();
+		self.ba_was_high = true;
+		self.swap_read_delay = 0;
+		self.recall_repeat = false;
+		self.terminal_swap_write = false;
+		self.late_ba_fall = false;
+		self.swap_refresh = false;
+		self.swap_release_pending = false;
 	}
 
 	/*
@@ -112,6 +133,11 @@ impl Reu {
 			self.dma = None;
 			self.waiting_ff00 = false;
 			self.irq_pending = false;
+			self.swap_read_delay = 0;
+			self.recall_repeat = false;
+			self.terminal_swap_write = false;
+			self.swap_refresh = false;
+			self.swap_release_pending = false;
 		}
 	}
 
@@ -136,10 +162,15 @@ impl Reu {
 
 	/*
 	 * Command start snapshots the visible counters and address-control bits.  In
-	 * Autoload mode the last values explicitly programmed by the CPU are used,
-	 * rather than live counters left behind by an earlier transfer.
+	 * Autoload mode the live counters still start the transfer; the saved
+	 * registers are restored only when the transfer completes.
 	 */
 	pub(crate) fn start_dma(&mut self) {
+		self.swap_refresh = false;
+		self.swap_release_pending = false;
+		self.terminal_swap_write = false;
+		self.swap_read_delay = 0;
+		self.recall_repeat = false;
 		self.waiting_ff00 = false;
 		if self.storage.is_none() {
 			self.regs[COMMAND] &= !COMMAND_EXECUTE;
@@ -157,21 +188,9 @@ impl Reu {
 		let visible_length = usize::from(self.regs[TRANSFER_LENGTH_LOW])
 			| (usize::from(self.regs[TRANSFER_LENGTH_HIGH]) << 8);
 
-		let c64_addr = if autoload {
-			self.shadow_c64_addr
-		} else {
-			visible_c64_addr
-		};
-		let reu_addr = if autoload {
-			self.shadow_reu_addr
-		} else {
-			visible_reu_addr
-		};
-		let length = if autoload {
-			self.shadow_len
-		} else {
-			visible_length
-		};
+		let c64_addr = visible_c64_addr;
+		let reu_addr = visible_reu_addr;
+		let length = visible_length;
 
 		self.regs[STATUS] &= STATUS_VERSION;
 		self.irq_pending = false;
@@ -189,6 +208,9 @@ impl Reu {
 			autoload,
 			swap_phase: SwapPhase::ReadC64,
 			latch: 0,
+			first_byte: true,
+			read_clock_odd: false,
+			verify_tail: false,
 		});
 	}
 
@@ -202,8 +224,74 @@ impl Reu {
 	 * phase may advance.  Keeping this decision inside the REU prevents CPU hold
 	 * semantics from drifting away from the controller's byte timing.
 	 */
-	pub(crate) fn bus_action(&self, ba_high: bool) -> ReuBusAction {
-		action_for_cycle(self.dma_active(), ba_high)
+	pub(crate) fn bus_action(&mut self, ba_high: bool, ba_high_phi1: bool, cycle: u64) -> ReuBusAction {
+		/* The read and write windows sample BA at different phases. Keep the
+		 * late sprite-request edge distinct from an established PHI1 request.
+		 * The startup, terminal-pair and delayed-read states below are inferred
+		 * from the recorded REU DMA timing measurements, not a REC circuit model. */
+		let falling = self.ba_was_high && !ba_high_phi1;
+		let rising = !self.ba_was_high && ba_high_phi1;
+		let late_falling = falling && self.late_ba_fall;
+		self.late_ba_fall = ba_high_phi1 && !ba_high;
+		self.ba_was_high = ba_high_phi1;
+		/* The swap phase clock continues during a BA hold. A return on a read
+		 * phase must resample the byte before committing its paired write. This
+		 * phase relation is inferred from the recorded old-VIC swap transfers. */
+		if rising && self.dma.is_some_and(|dma| dma.transfer_type == TransferType::Swap && dma.swap_phase == SwapPhase::WriteC64 && dma.read_clock_odd == (cycle & 1 != 0)) {
+			if let Some(dma) = self.dma.as_mut() {
+				if let Some(storage) = self.storage.as_mut() { storage.write(dma.reu_addr, dma.latch); }
+				dma.swap_phase = SwapPhase::ReadC64;
+			}
+		}
+		/* An immediate recall can retain its initial data latch across BA.
+		 * An armed FF00 command has already prepared that latch. */
+		if falling && self.regs[COMMAND] & COMMAND_FF00_DISABLE != 0 && self.dma.is_some_and(|dma| dma.transfer_type == TransferType::Recall && dma.first_byte) {
+			self.recall_repeat = true;
+		}
+		if self.terminal_swap_write {
+			self.terminal_swap_write = false;
+			ReuBusAction::Transfer
+		} else if self.swap_read_delay != 0 {
+			self.swap_read_delay -= 1;
+			if self.swap_read_delay == 0 { ReuBusAction::Transfer } else { ReuBusAction::Hold }
+		} else if falling && self.dma.is_some_and(|dma| dma.transfer_type == TransferType::Swap && dma.swap_phase == SwapPhase::ReadC64) {
+			if self.dma.is_some_and(|dma| dma.first_byte) {
+				ReuBusAction::Hold
+			} else if self.dma.is_some_and(|dma| dma.remaining == 1) {
+				self.terminal_swap_write = true;
+				ReuBusAction::Transfer
+			} else {
+				self.swap_read_delay = 2;
+				ReuBusAction::Hold
+			}
+		} else if matches!(self.c64_access(), ReuC64Access::Read(_)) {
+			action_for_cycle(self.dma_active(), ba_high_phi1)
+		} else if late_falling && self.dma.is_some_and(|dma| dma.transfer_type == TransferType::Swap && dma.swap_phase == SwapPhase::WriteC64) {
+			self.swap_read_delay = 1;
+			self.swap_refresh = true;
+			ReuBusAction::Hold
+		} else if falling && self.dma.is_some_and(|dma| dma.transfer_type == TransferType::Swap && dma.swap_phase == SwapPhase::WriteC64) {
+			/* The write half did not complete. Restore the displaced REU byte
+			 * before retrying the read half, without advancing either counter. */
+			if let Some(dma) = self.dma.as_mut() {
+				if let Some(storage) = self.storage.as_mut() { storage.write(dma.reu_addr, dma.latch); }
+				dma.swap_phase = SwapPhase::ReadC64;
+			}
+			ReuBusAction::Hold
+		} else if falling && matches!(self.c64_access(), ReuC64Access::Write(_)) {
+			if self.dma.is_some_and(|dma| dma.remaining == 1) { ReuBusAction::Hold } else { ReuBusAction::Transfer }
+		} else {
+			action_for_cycle(self.dma_active(), ba_high_phi1)
+		}
+	}
+
+	/* A swap completed while BA was high releases the CPU for its first
+	 * resumed cycle even if BA falls at that boundary. A swap completed in
+	 * the BA warning window does not. This mode-dependent handoff is inferred
+	 * from DMA timing recordings; applying it to one-cycle transfers contradicts
+	 * their recorded timings. Consume the release once, without changing VIC BA. */
+	pub(crate) fn cpu_ready_after_dma(&mut self, ba_high: bool) -> bool {
+		std::mem::take(&mut self.swap_release_pending) || ba_high
 	}
 
 	pub fn debug_register(&self, index: usize) -> u8 {
@@ -221,6 +309,9 @@ impl Reu {
 		let Some(dma) = self.dma else {
 			return ReuC64Access::None;
 		};
+		if self.swap_refresh {
+			return ReuC64Access::Read(dma.c64_addr);
+		}
 		match (dma.transfer_type, dma.swap_phase) {
 			(TransferType::Store | TransferType::Verify, _) => ReuC64Access::Read(dma.c64_addr),
 			(TransferType::Recall, _) => ReuC64Access::Write(dma.c64_addr),
@@ -243,23 +334,46 @@ impl Reu {
 			return false;
 		};
 
+		/* A late BA edge leaves the swap read latch open for one more clock;
+		 * the displaced REU byte remains reserved for the pending C64 write. */
+		if self.swap_refresh {
+			self.swap_refresh = false;
+			storage.write(dma.reu_addr, memory.reu_read(dma.c64_addr, cycle, vic));
+			dma.read_clock_odd = cycle & 1 != 0;
+			self.dma = Some(dma);
+			return true;
+		}
+
+		/* A mismatch on the penultimate byte leaves one final comparison in flight.
+		 * It determines EOB without advancing the visible counters (QuickReu tests5/7). */
+		if dma.verify_tail {
+			let matched = memory.reu_read(dma.c64_addr, cycle, vic) == storage.read(dma.reu_addr);
+			self.finish_dma(dma, matched);
+			return false;
+		}
+
 		let mut byte_complete = false;
 		let mut verify_error = false;
 
 		match dma.transfer_type {
 			TransferType::Store => {
-				let value = memory.cpu_read(dma.c64_addr, cycle, vic);
+				let value = memory.reu_read(dma.c64_addr, cycle, vic);
 				storage.write(dma.reu_addr, value);
 				byte_complete = true;
 			}
 			TransferType::Recall => {
-				let value = storage.read(dma.reu_addr);
+				let value = if self.recall_repeat && !dma.first_byte {
+					self.recall_repeat = false;
+					dma.latch
+				} else { storage.read(dma.reu_addr) };
+				dma.latch = value;
 				memory.cpu_write(dma.c64_addr, value, cycle, vic);
 				byte_complete = true;
 			}
 			TransferType::Swap => match dma.swap_phase {
 				SwapPhase::ReadC64 => {
-					let c64_value = memory.cpu_read(dma.c64_addr, cycle, vic);
+					dma.read_clock_odd = cycle & 1 != 0;
+					let c64_value = memory.reu_read(dma.c64_addr, cycle, vic);
 					let reu_value = storage.read(dma.reu_addr);
 					storage.write(dma.reu_addr, c64_value);
 					dma.latch = reu_value;
@@ -271,7 +385,7 @@ impl Reu {
 				}
 			},
 			TransferType::Verify => {
-				let c64_value = memory.cpu_read(dma.c64_addr, cycle, vic);
+				let c64_value = memory.reu_read(dma.c64_addr, cycle, vic);
 				if c64_value != storage.read(dma.reu_addr) {
 					self.regs[STATUS] |= STATUS_VERIFY_ERROR;
 					verify_error = true;
@@ -294,8 +408,15 @@ impl Reu {
 
 		self.publish_live_counters(&dma);
 
+		if verify_error && !transfer_complete && dma.remaining == 1 {
+			dma.verify_tail = true;
+			self.dma = Some(dma);
+			return true;
+		}
+
 		if transfer_complete || verify_error {
-			self.finish_dma(dma, !verify_error);
+			self.swap_release_pending = transfer_complete && dma.transfer_type == TransferType::Swap && !vic.ba_low;
+			self.finish_dma(dma, transfer_complete);
 			false
 		} else {
 			self.dma = Some(dma);
@@ -341,6 +462,11 @@ impl Reu {
 			self.regs[TRANSFER_LENGTH_HIGH] = (self.shadow_len >> 8) as u8;
 		}
 
+		self.update_irq();
+	}
+
+	/* Enabling an already latched source asserts IRQ without another transfer. */
+	pub(crate) fn update_irq(&mut self) {
 		let status = self.regs[STATUS];
 		let mask = self.regs[INTERRUPT_MASK];
 		let event_enabled = (status & STATUS_END_OF_BLOCK != 0

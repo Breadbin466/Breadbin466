@@ -16,6 +16,7 @@ pub struct CrtChip<'a> {
 /* CrtImage separates the global CRT header from its ordered CHIP packets. Parsing validates every length before exposing borrowed slices, so mapper construction never receives truncated packet data. */
 pub struct CrtImage<'a> {
 	pub mapper_type: MapperType,
+	pub hardware_revision: u8,
 	pub name: String,
 	pub game: bool,
 	pub exrom: bool,
@@ -49,6 +50,20 @@ impl<'a> CrtImage<'a> {
 			&& name.to_ascii_uppercase().contains("EASYFLASH 3")
 		{
 			mapper_type = MapperType::EasyFlash3;
+		}
+
+		/* CRT 1.01 identifies Nordic Replay through hardware revision 1
+		 * at header offset $1A (CRT-FORMAT). */
+		let hardware_revision = if read_u16(data, 0x14)? >= 0x0101 {
+			data[0x1A]
+		} else {
+			0
+		};
+		if mapper_type == MapperType::RetroReplay && hardware_revision > 1 {
+			return Err(format!(
+				"Unsupported Replay hardware revision {}",
+				hardware_revision
+			));
 		}
 
 		let mut chips = Vec::new();
@@ -116,6 +131,7 @@ impl<'a> CrtImage<'a> {
 
 		Ok(Self {
 			mapper_type,
+			hardware_revision,
 			name,
 			game,
 			exrom,

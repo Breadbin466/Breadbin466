@@ -31,6 +31,7 @@ impl Reu {
 		}
 
 		let value = match index {
+			REU_ADDRESS_BANK => self.regs[REU_ADDRESS_BANK] | 0xF8,
 			INTERRUPT_MASK => self.regs[INTERRUPT_MASK] | INTERRUPT_UNUSED_READ_HIGH,
 			ADDRESS_CONTROL => self.regs[ADDRESS_CONTROL] | ADDRESS_CONTROL_UNUSED_READ_HIGH,
 			_ => self.regs[index],
@@ -68,27 +69,34 @@ impl Reu {
 				}
 			}
 			C64_ADDRESS_LOW | C64_ADDRESS_HIGH => {
-				self.regs[index] = value;
-				self.shadow_c64_addr = u16::from(self.regs[C64_ADDRESS_LOW])
-					| (u16::from(self.regs[C64_ADDRESS_HIGH]) << 8);
+				let shift = (index - C64_ADDRESS_LOW) * 8;
+				self.shadow_c64_addr = (self.shadow_c64_addr & !(0xFFu16 << shift))
+					| (u16::from(value) << shift);
+				self.regs[C64_ADDRESS_LOW] = self.shadow_c64_addr as u8;
+				self.regs[C64_ADDRESS_HIGH] = (self.shadow_c64_addr >> 8) as u8;
 			}
-			REU_ADDRESS_LOW | REU_ADDRESS_HIGH | REU_ADDRESS_BANK => {
-				self.regs[index] = value;
-				/*
-				 * The bank latch retains all eight written bits.  A 1764 connects only
-				 * three bank lines to DRAM, so physical wrapping belongs in ReuMemory.
-				 */
-				self.shadow_reu_addr = usize::from(self.regs[REU_ADDRESS_LOW])
-					| (usize::from(self.regs[REU_ADDRESS_HIGH]) << 8)
-					| (usize::from(self.regs[REU_ADDRESS_BANK]) << 16);
+			REU_ADDRESS_LOW | REU_ADDRESS_HIGH => {
+				let shift = (index - REU_ADDRESS_LOW) * 8;
+				self.shadow_reu_addr = (self.shadow_reu_addr & !(0xFFusize << shift))
+					| (usize::from(value) << shift);
+				self.regs[REU_ADDRESS_LOW] = self.shadow_reu_addr as u8;
+				self.regs[REU_ADDRESS_HIGH] = (self.shadow_reu_addr >> 8) as u8;
+			}
+			REU_ADDRESS_BANK => {
+				self.regs[REU_ADDRESS_BANK] = value | 0xF8;
+				self.shadow_reu_addr = (self.shadow_reu_addr & 0xFFFF)
+					| (usize::from(value | 0xF8) << 16);
 			}
 			TRANSFER_LENGTH_LOW | TRANSFER_LENGTH_HIGH => {
-				self.regs[index] = value;
-				self.shadow_len = usize::from(self.regs[TRANSFER_LENGTH_LOW])
-					| (usize::from(self.regs[TRANSFER_LENGTH_HIGH]) << 8);
+				let shift = (index - TRANSFER_LENGTH_LOW) * 8;
+				self.shadow_len = (self.shadow_len & !(0xFFusize << shift))
+					| (usize::from(value) << shift);
+				self.regs[TRANSFER_LENGTH_LOW] = self.shadow_len as u8;
+				self.regs[TRANSFER_LENGTH_HIGH] = (self.shadow_len >> 8) as u8;
 			}
 			INTERRUPT_MASK => {
 				self.regs[INTERRUPT_MASK] = value | INTERRUPT_UNUSED_READ_HIGH;
+				self.update_irq();
 			}
 			ADDRESS_CONTROL => {
 				self.regs[ADDRESS_CONTROL] = value | ADDRESS_CONTROL_UNUSED_READ_HIGH;

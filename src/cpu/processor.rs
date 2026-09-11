@@ -40,6 +40,7 @@ Interrupt recognition is deliberately separate from line sampling. IRQ is level-
 
 A host tick first advances the external clock, then decides whether RDY may stretch the pending bus cycle. A completed cycle dispatches to the active opcode, reset or interrupt machine, after which the interrupt inputs are latched for the following instruction boundary. This ordering keeps bus direction, state-machine progress and interrupt recognition tied to the same externally visible cycle.
 */
+#[derive(Clone)]
 pub struct Cpu {
 	pub model: CpuModel,
 	pub a: u8,
@@ -81,6 +82,8 @@ pub struct Cpu {
 	pub port: CpuPort,
 
 	/* ANE and LXA depend on analogue internal bus behaviour; configurable magic values isolate that model-specific uncertainty from the sequencer. */
+	/* The reference profile selects EF for an unstretched ANE operand;
+	 * the parameter remains separate from the stable Boolean operation. */
 	pub magic_ane: u8,
 	pub magic_lxa: u8,
 
@@ -88,12 +91,19 @@ pub struct Cpu {
 
 	/* RDY can extend read cycles, but write cycles must complete before the processor can stop (MOS-6500-HARDWARE-1976, RDY operation). */
 	pub is_stalled: bool,
+	/* RDY at the indexed provisional read suppresses only the data mask
+	 * of SHX/SHY/AHX/TAS; crossing-address masking remains active. */
+	pub store_mask_dropped: bool,
+	/* ANE retains the effect of RDY stretching its immediate read until
+	 * that operand is consumed (CPU-ANE-MEASUREMENTS). */
+	pub ane_operand_stretched: bool,
 
 	pub interrupt_vector: u16,
 	/* Branch and special-cycle flags prevent a host-side resampling step from erasing the processor's instruction-boundary interrupt timing. */
 	pub skip_intr_latch: bool,
 	pub master_cycles: u64,
 	pub nmi_clk: u64,
+	opcode_fetch_cycle: Option<u64>,
 	pub brk_shadow: bool,
 	pub branch_delays_int: bool,
 }
@@ -129,14 +139,17 @@ impl Cpu {
 			irq_enables: false,
 			so_line: false,
 			port: CpuPort::new(),
-			magic_ane: 0xEE,
+			magic_ane: 0xEF,
 			magic_lxa: 0xEE,
 			cycles: 0,
 			is_stalled: false,
+			store_mask_dropped: false,
+			ane_operand_stretched: false,
 			interrupt_vector: 0,
 			skip_intr_latch: false,
 			master_cycles: 0,
 			nmi_clk: 0,
+			opcode_fetch_cycle: None,
 			brk_shadow: false,
 			branch_delays_int: false,
 		}
@@ -194,9 +207,12 @@ impl Cpu {
 		self.irq_enables = false;
 		self.so_line = false;
 		self.is_stalled = false;
+		self.store_mask_dropped = false;
+		self.ane_operand_stretched = false;
 		self.interrupt_vector = 0;
 		self.master_cycles = 0;
 		self.nmi_clk = 0;
+		self.opcode_fetch_cycle = None;
 		self.brk_shadow = false;
 		self.branch_delays_int = false;
 		self.port.reset_for_model(self.model);
@@ -223,9 +239,12 @@ impl Cpu {
 		self.irq_enables = false;
 		self.so_line = false;
 		self.is_stalled = false;
+		self.store_mask_dropped = false;
+		self.ane_operand_stretched = false;
 		self.interrupt_vector = 0;
 		self.skip_intr_latch = false;
 		self.nmi_clk = 0;
+		self.opcode_fetch_cycle = None;
 		self.brk_shadow = false;
 		self.branch_delays_int = false;
 		self.port.reset_for_model(self.model);
@@ -298,8 +317,57 @@ impl Cpu {
 	pub fn tick<B: SystemBus>(&mut self, bus: &mut B, rdy: bool) -> u8 {
 		self.master_cycles = self.master_cycles.wrapping_add(1);
 		if !rdy && !self.next_cycle_is_write() {
+			/* Interrupt recognition precedes the opcode read. Stretching that
+			 * read must not admit an NMI which was too recent at its start
+			 * (CPU-IRQ-DMA-MEASUREMENTS). */
+			if self.state == CpuState::Running && self.t_state == 0 {
+				self.opcode_fetch_cycle.get_or_insert(self.master_cycles);
+			}
+			/* RDY holds the internal sequencer while the pending read remains
+			visible on the enabled address bus. Evaluate the existing microcycle
+			into an uncommitted state so its address calculation has one owner.
+			Only the external bus read takes effect. (MOS-6500-HARDWARE-1976, RDY) */
+			if bus.address_enabled() {
+				let mut pending = self.clone();
+				pending.advance_microcycle(bus);
+			}
+			/* RDY holds the instruction sequencer, but CLI/SEI can update I
+			 * during the stretched final read. An IRQ sampled before SEI
+			 * remains recognised even after I becomes set
+			 * (CPU-IRQ-DMA-MEASUREMENTS). */
+			if self.state == CpuState::Running && self.t_state == 1 {
+				match self.opcode_info.op {
+					Operation::CLI => self.p &= !I_FLAG,
+					Operation::SEI => {
+						if self.p & I_FLAG == 0 && self.intr_irq_latch {
+							self.irq_disables = true;
+						}
+						self.p |= I_FLAG;
+					},
+					_ => {}
+				}
+			}
 			self.is_stalled = true;
-			if self.state == CpuState::Running && self.t_state != 0 && !self.skip_intr_latch {
+			if self.state == CpuState::Running && self.t_state == 1 && self.opcode_info.op == Operation::ANE {
+				self.ane_operand_stretched = true;
+			}
+			/* Hardware measurements locate the lost high-byte data mask at
+			 * this particular stretched read, not any DMA overlap
+			 * (CPU-MASKED-STORE-MEASUREMENTS). */
+			if self.state == CpuState::Running
+				&& matches!(self.opcode_info.op, Operation::SHX | Operation::SHY | Operation::AHX | Operation::TAS)
+				&& match self.opcode_info.mode {
+					AddressingMode::AbsoluteX | AddressingMode::AbsoluteY => self.t_state == 3,
+					AddressingMode::IndirectIndexed => self.t_state == 4,
+					_ => false,
+				}
+			{
+				self.store_mask_dropped = true;
+			}
+			/* The final taken-branch read follows its IRQ sampling point,
+			 * including when RDY stretches that read (CPU-IRQ-DMA-MEASUREMENTS). */
+			if self.state == CpuState::Running && self.t_state != 0 && !self.skip_intr_latch
+				&& !(self.opcode_info.mode == AddressingMode::Relative && self.t_state == 2 && !self.page_crossed) {
 				self.intr_irq_latch = self.irq_line;
 				self.intr_nmi_latch = self.nmi_pending;
 			}
@@ -307,13 +375,7 @@ impl Cpu {
 		}
 		self.is_stalled = false;
 		self.cycles = self.cycles.wrapping_add(1);
-		match self.state {
-			CpuState::ResetSequence => self.sequence_reset(bus),
-			CpuState::IrqSequence => self.sequence_interrupt(bus, IRQ_VECTOR, false),
-			CpuState::NmiSequence => self.sequence_interrupt(bus, NMI_VECTOR, true),
-			CpuState::Jammed => {}
-			CpuState::Running => self.sequence_running(bus),
-		}
+		self.advance_microcycle(bus);
 		if self.state == CpuState::Running && self.t_state != 0 {
 			if !self.skip_intr_latch {
 				self.intr_irq_latch = self.irq_line;
@@ -325,10 +387,23 @@ impl Cpu {
 	}
 
 	#[inline(always)]
+	fn advance_microcycle<B: SystemBus>(&mut self, bus: &mut B) {
+		match self.state {
+			CpuState::ResetSequence => self.sequence_reset(bus),
+			CpuState::IrqSequence => self.sequence_interrupt(bus, IRQ_VECTOR, false),
+			CpuState::NmiSequence => self.sequence_interrupt(bus, NMI_VECTOR, true),
+			CpuState::Jammed => {}
+			CpuState::Running => self.sequence_running(bus),
+		}
+	}
+
+	#[inline(always)]
 	/* Opcode fetch is also the instruction boundary at which previously sampled IRQ and pending NMI requests are accepted or deferred. */
 	fn sequence_running<B: SystemBus>(&mut self, bus: &mut B) {
 		match self.t_state {
 			0 => {
+				self.store_mask_dropped = false;
+				self.ane_operand_stretched = false;
 				let op = self.read_byte(bus, self.pc, true);
 				self.ir = op;
 				self.opcode_info = &OPCODES[op as usize];
@@ -343,9 +418,10 @@ impl Cpu {
 				self.brk_shadow = false;
 				let extra_delay: u64 = if self.branch_delays_int { 1 } else { 0 };
 				self.branch_delays_int = false;
+				let sampling_cycle = self.opcode_fetch_cycle.take().unwrap_or(self.master_cycles);
 				let nmi_eligible = !shadowed
 					&& self.nmi_pending
-					&& self.master_cycles
+					&& sampling_cycle
 						>= self.nmi_clk.wrapping_add(INTERRUPT_DELAY + extra_delay);
 				if nmi_eligible {
 					self.state = CpuState::NmiSequence;
@@ -438,17 +514,24 @@ impl Cpu {
 				self.t_state += 1;
 			}
 			4 => {
-				self.addr_abs = self.read_byte(bus, vector, true) as u16;
+				self.interrupt_vector = vector;
+				if !is_nmi && self.nmi_pending && self.master_cycles >= self.nmi_clk.wrapping_add(INTERRUPT_DELAY) {
+					self.interrupt_vector = NMI_VECTOR;
+					self.nmi_pending = false;
+					self.intr_nmi_latch = false;
+				}
+				self.addr_abs = self.read_byte(bus, self.interrupt_vector, true) as u16;
 				self.t_state += 1;
 			}
 			5 => {
-				let hi = self.read_byte(bus, vector.wrapping_add(1), true) as u16;
+				let hi = self.read_byte(bus, self.interrupt_vector.wrapping_add(1), true) as u16;
 				self.pc = (hi << 8) | self.addr_abs;
 				if is_nmi {
 					self.nmi_pending = false;
 				}
 				self.state = CpuState::Running;
 				self.t_state = 0;
+				self.brk_shadow = true;
 				self.irq_delay = false;
 				self.irq_disables = false;
 				self.irq_enables = false;
@@ -525,6 +608,8 @@ impl Cpu {
 			Operation::ANE => {
 				let magic = if self.model == CpuModel::Mos8502 {
 					0x00
+				} else if self.ane_operand_stretched {
+					self.magic_ane & 0xFE
 				} else {
 					self.magic_ane
 				};
@@ -608,13 +693,21 @@ impl Cpu {
 			_ => 0,
 		};
 
-		let final_addr = if matches!(
-			info.op,
-			Operation::SHY | Operation::SHX | Operation::AHX | Operation::TAS
-		) && self.page_crossed
-		{
-			val &= (self.addr_abs >> 8) as u8;
-			self.addr_abs
+		let masked_store = matches!(info.op, Operation::SHY | Operation::SHX | Operation::AHX | Operation::TAS)
+			&& self.model != CpuModel::Mos8502;
+		/* Save the masked address byte before RDY can change the data
+		 * value. Page-crossing corruption is independent of that change. */
+		let address_value = val;
+		if masked_store && self.store_mask_dropped {
+			val = match info.op {
+				Operation::SHY => self.y,
+				Operation::SHX => self.x,
+				Operation::AHX | Operation::TAS => self.a & self.x,
+				_ => val,
+			};
+		}
+		let final_addr = if masked_store && self.page_crossed {
+			(u16::from(address_value) << 8) | (self.addr_abs & 0x00FF)
 		} else {
 			self.addr_abs
 		};
@@ -627,20 +720,23 @@ impl Cpu {
 	/* The 6510 and 8502 intercept addresses $0000 and $0001 inside the processor package; a plain 6502 forwards them to the system bus. */
 	pub fn read_byte<B: SystemBus>(&mut self, bus: &mut B, addr: u16, _dummy: bool) -> u8 {
 		if self.model != CpuModel::Mos6502 && addr <= 0x0001 {
-			return self.port.cpu_read(addr, self.cycles, self.model);
+			return self.port.cpu_read(addr, self.master_cycles, self.model);
 		}
-		bus.read(addr, self.cycles)
+		bus.read(addr, self.master_cycles)
 	}
 
 	#[inline(always)]
 	/* Writes to the integrated 6510/8502 port update and commit its latch during the same CPU access; all other addresses are forwarded unchanged to the system bus. */
 	pub fn write_byte<B: SystemBus>(&mut self, bus: &mut B, addr: u16, val: u8) {
 		if self.model != CpuModel::Mos6502 && addr <= 0x0001 {
-			self.port.cpu_write(addr, val, self.cycles, self.model);
-			self.port.commit_write(self.cycles, self.model);
+			self.port.cpu_write(addr, val, self.master_cycles, self.model);
+			self.port.commit_write(self.master_cycles, self.model);
+			if self.model == CpuModel::Mos6510 {
+				bus.write_port(addr, self.master_cycles);
+			}
 			return;
 		}
-		bus.write(addr, val, self.cycles);
+		bus.write(addr, val, self.master_cycles);
 	}
 
 	/* Stack pushes write at $0100 plus the current stack pointer, then decrement the pointer as the NMOS bus sequence expects. */

@@ -185,6 +185,9 @@ impl fmt::Display for CartridgeInfo {
 
 /* CartridgeMapper describes the signals and address windows that real expansion-port hardware can influence. Reads may mutate mapper state, peeks must not; update_signals publishes GAME, EXROM and NMI after those side effects; phase_modes allows cartridges whose mapping differs between PHI1 and PHI2. */
 pub trait CartridgeMapper {
+	/* Image revisions select physical cartridge variants before CHIP packets
+	 * are loaded. Most cartridge families have only their original revision. */
+	fn set_hardware_revision(&mut self, _revision: u8) {}
 	fn reset(&mut self);
 	fn read_roml(&mut self, offset: u16, cycle: u64) -> Option<u8>;
 	fn read_romh(&mut self, offset: u16, cycle: u64) -> Option<u8>;

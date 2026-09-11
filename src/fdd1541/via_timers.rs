@@ -85,7 +85,10 @@ impl ViaChip {
 					}
 				} else if !self.t1_one_shot_complete {
 					self.set_flag(VIA_IFR_T1);
-					self.pb7 = true;
+					/* A one-shot expiry clocks the same output flip-flop as
+					continuous mode, but subsequent expiries are inhibited.
+					(VIA-HARDWARE-DIAGNOSTICS, via10 through via14) */
+					self.pb7 = !self.pb7;
 					self.t1_one_shot_complete = true;
 				}
 			}
@@ -134,16 +137,14 @@ impl ViaChip {
 	}
 
 	#[inline(always)]
-	/* Timer 2 decrements as a free-running 16-bit counter even though its interrupt is one-shot. Selected low-byte wrap positions also generate the internal shift-register clock, with the initial wraps suppressed to reproduce the 6522 start-up phase. */
+	/* Timer 2 decrements as a free-running 16-bit counter even though its interrupt is one-shot. In Timer 2 shift modes, the low byte reloads every N+2 clocks and drives CB1; the high byte still receives the borrow, so the timer interrupt remains a separate one-shot. (MOS-6522-DATASHEET, figure 22; VIA-HARDWARE-DIAGNOSTICS, via20 and via21) */
 	fn decrement_timer_2(&mut self) {
 		self.t2_counter = self.t2_counter.wrapping_sub(1);
 		self.t2_zero_pending = self.t2_counter == 0;
 
 		if (self.t2_counter & 0x00FF) == 0x00FE {
-			self.t2_low_byte_wraps = self.t2_low_byte_wraps.saturating_add(1);
 			let mode = shift_register_mode(self.acr);
-			let clock_ready = mode == 4 && self.t2_low_byte_wraps > 1
-				|| matches!(mode, 1 | 5) && self.t2_low_byte_wraps > 2;
+			let clock_ready = matches!(mode, 1 | 4 | 5);
 			if clock_ready {
 				let positive_edge = self.t2_shift_clock_high;
 				self.t2_shift_clock_high = !self.t2_shift_clock_high;

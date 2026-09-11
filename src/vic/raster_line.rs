@@ -5,6 +5,7 @@
 use crate::memory::Memory;
 use super::state::VicII;
 use super::fsm::DisplayState;
+use super::border_renderer::draw_border;
 use super::constants::{IRQ_RASTER, DEN_LATCH_RASTER_LINE};
 
 /* Line-boundary work is kept outside the main cycle match: it advances the raster counter, finalises the previous line, prepares sprite/display state and performs the frame-wrap decisions that become visible at cycles 1 and 2. */
@@ -15,8 +16,13 @@ impl VicII {
 	Cycle 1 closes the previous scanline before opening the next one. It flushes rendered pixels, advances the raster counter, evaluates the raster IRQ edge, latches DEN on line $30, recomputes badline state, publishes BA and performs the sprite-3 pointer/data slot that straddles the line boundary.
 	*/
 	pub(super) fn begin_frame_line(&mut self, memory: &mut Memory, bank: u8, master_cycle: u64, cycle_prev: u8) {
-		self.screen.flush_line(self.timing.raster_line as usize);
+		/* The foreground shifter writes one output slot ahead of the border
+		multiplexer. Resolve that final slot before exporting the line. */
+		let output_cycle = u16::from(cycle_prev) + 1;
+		draw_border(&mut self.screen, &self.border, output_cycle);
+		self.screen.color_foreground(output_cycle);
 		self.draw_active_sprites(cycle_prev);
+		self.screen.flush_line(self.timing.raster_line as usize);
 
 		let hit_last_line = self.timing.advance_line();
 

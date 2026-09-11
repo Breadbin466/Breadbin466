@@ -32,7 +32,7 @@ impl VicII {
 
 	#[inline]
 	/* Writes are split between cycle-sensitive side effects and ordinary latch storage. Position, expansion, priority, raster and scroll changes are observed at their hardware timing points before the common register file is updated. */
-	pub fn write_register(&mut self, addr: u16, val: u8, memory: &mut Memory) {
+	pub fn write_register(&mut self, addr: u16, val: u8, _memory: &mut Memory) {
 		let was_badline = self.timing.is_badline;
 		let reg         = addr & 0x3F;
 		let old_rsel    = self.regs.rsel();
@@ -88,7 +88,7 @@ impl VicII {
 		}
 
 		if reg == 0x11 {
-			self.apply_vertical_scroll_write(val, memory, cycle, old_rsel, was_badline);
+			self.apply_vertical_scroll_write(val, cycle, old_rsel, was_badline);
 			return;
 		}
 
@@ -98,13 +98,13 @@ impl VicII {
 		}
 
 		self.regs.write(addr, val, &mut self.irq);
-		/* Colour writes also update the screen-side colour cache immediately. This keeps pixels already in flight aligned with the register write clock instead of waiting for the next cell fetch. */
+		/* Colour writes retain the previous output value alongside the new register value so the screen-side colour stage can apply the 6569 one-dot propagation delay. */
 		match reg {
-			0x20 => self.screen.set_background_colour(14, self.regs.border_col),
-			0x21..=0x24 => self.screen.set_background_colour((reg - 0x21) as usize, self.regs.bg_cols[(reg - 0x21) as usize]),
-			0x25 => self.screen.set_background_colour(12, self.regs.sprite_mc_0),
-			0x26 => self.screen.set_background_colour(13, self.regs.sprite_mc_1),
-			0x27..=0x2E => self.screen.set_background_colour(4 + (reg - 0x27) as usize, self.regs.sprite_cols[(reg - 0x27) as usize]),
+			0x20 => self.screen.set_background_colour(14, self.regs.border_col, cycle),
+			0x21..=0x24 => self.screen.set_background_colour((reg - 0x21) as usize, self.regs.bg_cols[(reg - 0x21) as usize], cycle),
+			0x25 => self.screen.set_background_colour(12, self.regs.sprite_mc_0, cycle),
+			0x26 => self.screen.set_background_colour(13, self.regs.sprite_mc_1, cycle),
+			0x27..=0x2E => self.screen.set_background_colour(4 + (reg - 0x27) as usize, self.regs.sprite_cols[(reg - 0x27) as usize], cycle),
 			_ => {}
 		}
 	}

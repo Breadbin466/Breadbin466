@@ -30,6 +30,8 @@ pub(super) fn apply_to_mcm_scroll_transition(&mut self, transition: ScrollTransi
 			cycle,
 			..
 		} = transition;
+		/* An odd starting offset exposes only one half of the last symbol.
+		 * Its spill must stop at the original cell boundary. */
 		let mut gfx_data1_adjusted;
 		let mut gfx_data1_spill;
 		let char_data1_merged;
@@ -82,7 +84,7 @@ pub(super) fn apply_to_mcm_scroll_transition(&mut self, transition: ScrollTransi
 			1 => {
 				render_foreground_span(screen, ForegroundCell::new(gfx_data1, 4, char_data1, mode_new, 1, cdod, cycle), PixelSpan::new(3, 2), skip_ref);
 				render_foreground_span(screen, ForegroundCell::new(gfx_data1_adjusted, 6, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(4, 2), skip_ref);
-				render_foreground_span(screen, ForegroundCell::new(gfx_data1_spill, 8, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(6, 2), skip_ref);
+				render_foreground_span(screen, ForegroundCell::new(gfx_data1_spill, 8, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(6, 1), skip_ref);
 			}
 			2 => {
 				render_foreground_span(screen, ForegroundCell::new(gfx_data1, 4, char_data1, mode_new, 1, cdod, cycle), PixelSpan::new(2, 2), skip_ref);
@@ -92,7 +94,7 @@ pub(super) fn apply_to_mcm_scroll_transition(&mut self, transition: ScrollTransi
 			3 => {
 				render_foreground_span(screen, ForegroundCell::new(gfx_data1, 4, char_data1, mode_new, 1, cdod, cycle), PixelSpan::new(1, 2), skip_ref);
 				render_foreground_span(screen, ForegroundCell::new(gfx_data1_adjusted, 6, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(2, 2), skip_ref);
-				render_foreground_span(screen, ForegroundCell::new(gfx_data1_spill, 8, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(4, 4), skip_ref);
+				render_foreground_span(screen, ForegroundCell::new(gfx_data1_spill, 8, char_data1, mode_new, 0, cdod, cycle), PixelSpan::new(4, 3), skip_ref);
 			}
 			4 => {
 				render_foreground_span(screen, ForegroundCell::new(gfx_data1, 4, char_data1_merged, mode_new, 1, cdod, cycle), PixelSpan::new(0, 2), skip_ref);
@@ -103,7 +105,7 @@ pub(super) fn apply_to_mcm_scroll_transition(&mut self, transition: ScrollTransi
 				render_foreground_span(screen, ForegroundCell::new(gfx_data0, 4, char_data0, mode_new, 1, cdod, cycle), PixelSpan::new(7, 1), skip_ref);
 				render_foreground_span(screen, ForegroundCell::new(gfx_data1, 5, char_data1_merged, mode_new, 1, cdod, cycle), PixelSpan::new(0, 1), skip_ref);
 				render_foreground_span(screen, ForegroundCell::new(gfx_data1_adjusted, 6, char_data1_merged, mode_new, decremented_shift_mode, cdod, cycle), PixelSpan::new(0, 2), skip_ref);
-				render_foreground_span(screen, ForegroundCell::new(gfx_data1_spill, 8, char_data1_merged, mode_new, decremented_shift_mode, cdod, cycle), PixelSpan::new(2, 6), skip_ref);
+				render_foreground_span(screen, ForegroundCell::new(gfx_data1_spill, 8, char_data1_merged, mode_new, decremented_shift_mode, cdod, cycle), PixelSpan::new(2, 5), skip_ref);
 			}
 			6 => {
 				render_foreground_span(screen, ForegroundCell::new(gfx_data0, 4, char_data0, mode_new, 1, cdod, cycle), PixelSpan::new(6, 2), skip_ref);
