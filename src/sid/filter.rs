@@ -273,9 +273,7 @@ impl Filter {
 			/ (square + FILTER_BANDPASS_LOW_COUPLING_KNEE * FILTER_BANDPASS_LOW_COUPLING_KNEE);
 		self.control.resonance_index = usize::from(self.registers.resonance & 0x0f);
 		let coefficient = &self.coefficients[self.control.effective_cutoff_index];
-		self.control.integrator_a1 = coefficient.a1[self.control.resonance_index];
-		self.control.integrator_a2 = coefficient.a2[self.control.resonance_index];
-		self.control.integrator_a3 = coefficient.a3[self.control.resonance_index];
+		self.control.integrator_gain = coefficient.integrator_gain[self.control.resonance_index];
 		self.control.input_drive = coefficient.input_drive;
 		self.control.feedback_drive = coefficient.feedback_drive;
 		self.control.damping = coefficient.damping[self.control.resonance_index];
@@ -349,32 +347,25 @@ impl Filter {
 		let feedback_drive =
 			interpolate(&self.control.feedback_drive) * self.control.resonance_feedback_scale;
 		let input_drive = interpolate(&self.control.input_drive);
-		let mut a1 = interpolate(&self.control.integrator_a1);
-		let mut a2 = interpolate(&self.control.integrator_a2);
-		let mut a3 = interpolate(&self.control.integrator_a3);
-		let source_energy_drive =
-			self.state.filter_source_energy / (self.state.filter_source_energy + FILTER_SOURCE_ENERGY_KNEE);
-		let integrator_gain_shift = self.control.source_gain_modulation
-			* source_energy_drive
+		/* Interpolate the pole parameter directly, then apply source loading before
+		 * constructing the trapezoidal integrator coefficients. Resonance already
+		 * supplies the damping; recovering it from rounded coefficients is
+		 * ill-conditioned at low cutoff and adds redundant divisions. */
+		let source_energy_drive = self.state.filter_source_energy
+			/ (self.state.filter_source_energy + FILTER_SOURCE_ENERGY_KNEE);
+		let shift = self.control.source_gain_modulation * source_energy_drive
 			* self.control.source_modulation_resonance_scale;
-		if integrator_gain_shift > 0.0 {
-			let base_integrator_gain = a2 / a1;
-			let effective_damping =
-				(a1.recip() - 1.0 - base_integrator_gain * base_integrator_gain) / base_integrator_gain;
-			let shifted_integrator_gain = base_integrator_gain + integrator_gain_shift;
-			a1 = 1.0
-				/ (1.0 + shifted_integrator_gain * (shifted_integrator_gain + effective_damping));
-			a2 = shifted_integrator_gain * a1;
-			a3 = shifted_integrator_gain * shifted_integrator_gain * a1;
-		}
+		let g = interpolate(&self.control.integrator_gain) + shift;
+		let a1 = 1.0 / (1.0 + g * (g + damping));
+		let a2 = g * a1;
+		let a3 = g * g * a1;
 
 		let driven_input = IntegratorState::saturate(filter_input, input_drive);
-		for _ in 1..FILTER_SUBSTEPS {
-			self.state
-				.advance_state(driven_input, damping, feedback_drive, a1, a2, a3);
+		let mut outputs = FilterOutputs::default();
+		for _ in 0..FILTER_SUBSTEPS {
+			outputs = self.state.advance(driven_input, damping, feedback_drive, a1, a2, a3);
 		}
-		self.state
-			.advance_output(driven_input, damping, feedback_drive, a1, a2, a3)
+		outputs
 	}
 
 	#[inline(always)]
@@ -502,21 +493,12 @@ impl Filter {
 			+ self.transients.volume_slow_charge
 			+ self.transients.pulse_gate_fast_charge
 			- self.transients.pulse_gate_slow_charge;
-		if self.transients.volume_fast_charge != 0.0 {
-			self.transients.volume_fast_charge *= self.transients.volume_fast_decay;
-		}
-		if self.transients.volume_slow_charge != 0.0 {
-			self.transients.volume_slow_charge *= self.transients.volume_slow_decay;
-		}
-		if self.transients.bypass_attack_charge != 0.0 {
-			self.transients.bypass_attack_charge *= self.transients.bypass_attack_decay;
-		}
-		if self.transients.pulse_gate_fast_charge != 0.0 {
-			self.transients.pulse_gate_fast_charge *= self.transients.pulse_gate_fast_decay;
-		}
-		if self.transients.pulse_gate_slow_charge != 0.0 {
-			self.transients.pulse_gate_slow_charge *= self.transients.pulse_gate_slow_decay;
-		}
+		/* Positive finite decay factors preserve signed zero, so idle charges need no branches. */
+		self.transients.volume_fast_charge *= self.transients.volume_fast_decay;
+		self.transients.volume_slow_charge *= self.transients.volume_slow_decay;
+		self.transients.bypass_attack_charge *= self.transients.bypass_attack_decay;
+		self.transients.pulse_gate_fast_charge *= self.transients.pulse_gate_fast_decay;
+		self.transients.pulse_gate_slow_charge *= self.transients.pulse_gate_slow_decay;
 		output.round() as i32
 	}
 }

@@ -14,7 +14,7 @@ pub struct VICMemoryController;
 impl VICMemoryController {
 	/* CIA2 selects one of four 16 KiB banks. Within the bank, the PLA may substitute character ROM or cartridge ROMH; otherwise the VIC reads physical RAM directly (C64-PRG-1982, VIC memory organisation; C64-PLA-DISSECTED-2012, VIC maps). */
 	#[inline(always)]
-	pub fn read(
+	pub fn read<const PHI2: bool>(
 		va: u16,
 		bank: u8,
 		cycle: u64,
@@ -27,7 +27,8 @@ impl VICMemoryController {
 		let va14 = va & 0x3FFF;
 		let phys_addr = ((bank as u16) << 14) | va14;
 
-		let region = map_vic_addr(va14, bank as usize, cartridge.configuration.phi1_mode);
+		let mode = if PHI2 { cartridge.configuration.phi2_mode } else { cartridge.configuration.phi1_mode };
+		let region = map_vic_addr(va14, bank as usize, mode);
 
 		match region {
 			MapRegion::Char => rom.read_char(va14 & 0x0FFF),

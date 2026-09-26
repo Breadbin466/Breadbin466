@@ -13,7 +13,7 @@ pub(crate) const DRIVE_RING_MASK: u64 = DRIVE_RING_CAPACITY as u64 - 1;
 /* These limits bound scheduling overhead only. Cable reads always wait
 for the exact emulated boundary regardless of worker lag. */
 pub(crate) const DRIVE_TIGHT_WINDOW: u32 = 2_000;
-pub(crate) const DRIVE_SKEW_CHECK_MASK: u64 = 255;
+pub(crate) const DRIVE_SKEW_CHECK_MASK: u64 = DRIVE_BATCH_LIMIT - 1;
 pub(crate) const DRIVE_MAX_SKEW: u64 = 4096;
 pub(crate) const DRIVE_BATCH_LIMIT: u64 = 4_096;
 /* The seven low IFR bits retain the MOS 6522 interrupt-source layout; bit 7 is the derived IRQ summary. */

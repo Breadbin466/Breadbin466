@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering;
 impl DiskMechanism {
 	/* Mounting parses a complete replacement medium before committing it, converts supported containers into circular track bytes plus per-byte density metadata, and preserves the current mechanical position if the replacement is valid. */
 	pub fn mount(&mut self, path: &Path) -> bool {
-		let data = match fs::read(path) {
+		let data = match crate::host_files::read(path, super::disk_image::MAX_IMAGE_SIZE) {
 			Ok(data) => data,
 			Err(_) => return false,
 		};

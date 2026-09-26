@@ -49,9 +49,7 @@ impl FilterRegisters {
 
 pub(super) struct ControlCache {
 	pub(super) effective_cutoff_index: usize,
-	pub(super) integrator_a1: [f32; FILTER_OPERATING_BINS],
-	pub(super) integrator_a2: [f32; FILTER_OPERATING_BINS],
-	pub(super) integrator_a3: [f32; FILTER_OPERATING_BINS],
+	pub(super) integrator_gain: [f32; FILTER_OPERATING_BINS],
 	pub(super) input_drive: [f32; FILTER_OPERATING_BINS],
 	pub(super) feedback_drive: [f32; FILTER_OPERATING_BINS],
 	pub(super) damping: f32,
@@ -77,9 +75,7 @@ impl ControlCache {
 	pub(super) fn new(initial: &FilterCoefficients) -> Self {
 		Self {
 			effective_cutoff_index: 0,
-			integrator_a1: initial.a1[0],
-			integrator_a2: initial.a2[0],
-			integrator_a3: initial.a3[0],
+			integrator_gain: initial.integrator_gain[0],
 			input_drive: initial.input_drive,
 			feedback_drive: initial.feedback_drive,
 			damping: initial.damping[0],

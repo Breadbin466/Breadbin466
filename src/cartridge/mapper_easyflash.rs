@@ -5,178 +5,8 @@
 use super::bank_storage::BankStorage;
 use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/* FlashState follows the command parser of an individual programmable ROM chip. Unlock cycles, program setup, erase setup and busy status are kept explicit because ordinary ROM reads can advance or report those operations. */
-enum FlashState {
-	/* No command prefix is pending; array reads return normal contents. */
-	Idle,
-	/* The first AA unlock write was accepted and the parser expects the 55 cycle. */
-	Command1,
-	/* Both unlock writes were accepted and the following command byte selects the operation. */
-	Command2,
-	/* The next array write programs one byte when flash writes are enabled. */
-	WriteMode,
-	/* Erase setup was accepted and a second unlock sequence must follow. */
-	SectorErase1,
-	/* The first erase-confirm unlock write was accepted. */
-	SectorErase2,
-	/* The second erase-confirm unlock write was accepted and the next command chooses chip or sector erase. */
-	SectorErase3,
-	/* Reads return manufacturer and device identification until reset by command F0. */
-	AutoSelect,
-}
-
-/* FlashChip keeps programmed bytes separate from transient command and timing state. Reads during a pending operation return status signalling rather than the final array contents. */
-struct FlashChip {
-	state: FlashState,
-	write_enabled: bool,
-	operation_start_cycle: u64,
-	is_operating: bool,
-	toggle_bit: bool,
-	polling_byte: u8,
-}
-
-impl FlashChip {
-	fn new() -> Self {
-		Self {
-			state: FlashState::Idle,
-			write_enabled: false,
-			operation_start_cycle: 0,
-			is_operating: false,
-			toggle_bit: false,
-			polling_byte: 0xFF,
-		}
-	}
-
-	fn reset(&mut self) {
-		self.state = FlashState::Idle;
-		self.write_enabled = false;
-		self.is_operating = false;
-		self.toggle_bit = false;
-	}
-
-	fn enable_writes(&mut self) {
-		self.write_enabled = true;
-	}
-
-	fn disable_writes(&mut self) {
-		self.write_enabled = false;
-	}
-
-	fn update_status(&mut self, current_cycle: u64) {
-		if self.is_operating && current_cycle >= self.operation_start_cycle + 500000 {
-			self.is_operating = false;
-			self.state = FlashState::Idle;
-		}
-	}
-
-	/* While a program or erase operation is pending, reads expose toggle and polling bits instead of stable array data; normal contents return only after the simulated operation completes. */
-	fn read_status(&mut self, current_cycle: u64, real_byte: u8) -> u8 {
-		self.update_status(current_cycle);
-		if !self.is_operating {
-			return real_byte;
-		}
-		self.toggle_bit = !self.toggle_bit;
-		let mut status = 0x00;
-		if self.toggle_bit {
-			status |= 0x40;
-		}
-		status |= self.polling_byte & 0x80;
-		status |= real_byte & 0x3F;
-		status
-	}
-
-	/* Flash commands are recognised as an ordered unlock sequence. Any unexpected address or value returns the parser to Idle so ordinary cartridge writes cannot accidentally program the array. */
-	fn process_write(&mut self, addr: u16, value: u8, current_cycle: u64) -> Option<u8> {
-		let offset = addr & 0x1FFF;
-		if value == 0xF0 {
-			self.state = FlashState::Idle;
-			self.is_operating = false;
-			return None;
-		}
-
-		match self.state {
-			FlashState::Idle => {
-				if offset == 0x1555 && value == 0xAA {
-					self.state = FlashState::Command1;
-				}
-				None
-			}
-			FlashState::Command1 => {
-				if offset == 0x0AAA && value == 0x55 {
-					self.state = FlashState::Command2;
-				} else {
-					self.state = FlashState::Idle;
-				}
-				None
-			}
-			FlashState::Command2 => {
-				if offset == 0x1555 {
-					match value {
-						0xA0 => {
-							self.state = FlashState::WriteMode;
-							None
-						}
-						0x90 => {
-							self.state = FlashState::AutoSelect;
-							None
-						}
-						0x80 => {
-							self.state = FlashState::SectorErase1;
-							None
-						}
-						_ => {
-							self.state = FlashState::Idle;
-							None
-						}
-					}
-				} else {
-					self.state = FlashState::Idle;
-					None
-				}
-			}
-			FlashState::WriteMode => {
-				self.state = FlashState::Idle;
-				if self.write_enabled {
-					self.is_operating = true;
-					self.operation_start_cycle = current_cycle;
-					self.polling_byte = value;
-					Some(value)
-				} else {
-					None
-				}
-			}
-			FlashState::SectorErase1 => {
-				if offset == 0x1555 && value == 0xAA {
-					self.state = FlashState::SectorErase2;
-				} else {
-					self.state = FlashState::Idle;
-				}
-				None
-			}
-			FlashState::SectorErase2 => {
-				if offset == 0x0AAA && value == 0x55 {
-					self.state = FlashState::SectorErase3;
-				} else {
-					self.state = FlashState::Idle;
-				}
-				None
-			}
-			FlashState::SectorErase3 => {
-				self.state = FlashState::Idle;
-				if self.write_enabled && value == 0x30 {
-					self.is_operating = true;
-					self.operation_start_cycle = current_cycle;
-					self.polling_byte = 0xFF;
-					Some(0xFF)
-				} else {
-					None
-				}
-			}
-			FlashState::AutoSelect => None,
-		}
-	}
-}
+use super::flash_chip::{FlashChip, FlashState, FlashWrite};
+use super::constants::{FLASH_BANKS_PER_SECTOR, FLASH_BANKS_PER_CHIP};
 
 /* EasyFlashMapper owns two independently addressed flash chips, cartridge RAM and control registers. Its flash state machines preserve command sequences, busy status and programmable contents across accesses. */
 pub struct EasyFlashMapper {
@@ -236,10 +66,10 @@ impl CartridgeMapper for EasyFlashMapper {
 		self.flash_lo.reset();
 		self.flash_hi.reset();
 		self.ram.fill(0x00);
-		self.control_reg = 0x02;
+		self.control_reg = 0;
 		self.pending_bank = None;
 		self.pending_slot = None;
-		self.pending_control = Option::None;
+		self.pending_control = Some(0);
 		self.pending_disable = Option::None;
 	}
 
@@ -248,6 +78,7 @@ impl CartridgeMapper for EasyFlashMapper {
 			match offset & 0xFF {
 				0x00 => return Some(0x01),
 				0x01 => return Some(0xA4),
+				0x02 => return Some(0x00),
 				_ => {}
 			}
 		}
@@ -265,6 +96,7 @@ impl CartridgeMapper for EasyFlashMapper {
 			return match offset & 0xFF {
 				0x00 => Some(0x01),
 				0x01 => Some(0xA4),
+				0x02 => Some(0x00),
 				_ => Some(0xFF),
 			};
 		}
@@ -282,6 +114,7 @@ impl CartridgeMapper for EasyFlashMapper {
 			match offset & 0xFF {
 				0x00 => return Some(0x01),
 				0x01 => return Some(0xA4),
+				0x02 => return Some(0x00),
 				_ => {}
 			}
 		}
@@ -299,6 +132,7 @@ impl CartridgeMapper for EasyFlashMapper {
 			return match offset & 0xFF {
 				0x00 => Some(0x01),
 				0x01 => Some(0xA4),
+				0x02 => Some(0x00),
 				_ => Some(0xFF),
 			};
 		}
@@ -378,29 +212,32 @@ impl CartridgeMapper for EasyFlashMapper {
 	}
 
 	/* Writes to ROML or ROMH are routed through the command parser of the selected flash chip. Array bytes change only when a completed command authorises programming or erase. */
-	fn write_rom(&mut self, addr: u16, val: u8, cycle: u64) {
-		let b = self.get_absolute_bank();
-		let offset = (addr & 0x1FFF) as usize;
-		if addr >= 0x8000 && addr <= 0x9FFF {
-			if let Some(mask) = self.flash_lo.process_write(addr, val, cycle) {
-				if let Some(bank) = self.roml.get_bank_mut(b) {
-					if mask == 0xFF {
-						bank[offset] = 0xFF;
-					} else {
-						bank[offset] &= mask;
-					}
+	fn write_rom(&mut self, addr: u16, value: u8, cycle: u64) {
+		let bank = self.get_absolute_bank();
+		let (chip, storage) = match addr {
+			0x8000..=0x9FFF => (&mut self.flash_lo, &mut self.roml),
+			0xA000..=0xBFFF | 0xE000..=0xFFFF => (&mut self.flash_hi, &mut self.romh),
+			_ => return,
+		};
+		match chip.process_write(addr, value, cycle) {
+			Some(FlashWrite::Program(data)) => {
+				let offset = (addr & 0x1FFF) as usize;
+				let previous = storage.get_bank(bank).map_or(0xFF, |bytes| bytes[offset]);
+				storage.store_bank(bank, &[previous & data], offset);
+			}
+			Some(FlashWrite::EraseSector) => {
+				let first = bank / FLASH_BANKS_PER_SECTOR * FLASH_BANKS_PER_SECTOR;
+				for index in first..first + FLASH_BANKS_PER_SECTOR {
+					if let Some(bytes) = storage.get_bank_mut(index) { bytes.fill(0xFF); }
 				}
 			}
-		} else if addr >= 0xA000 && addr <= 0xBFFF {
-			if let Some(mask) = self.flash_hi.process_write(addr, val, cycle) {
-				if let Some(bank) = self.romh.get_bank_mut(b) {
-					if mask == 0xFF {
-						bank[offset] = 0xFF;
-					} else {
-						bank[offset] &= mask;
-					}
+			Some(FlashWrite::EraseChip) => {
+				let first = bank / FLASH_BANKS_PER_CHIP * FLASH_BANKS_PER_CHIP;
+				for index in first..first + FLASH_BANKS_PER_CHIP {
+					if let Some(bytes) = storage.get_bank_mut(index) { bytes.fill(0xFF); }
 				}
 			}
+			None => {}
 		}
 	}
 
@@ -424,16 +261,10 @@ impl CartridgeMapper for EasyFlashMapper {
 		}
 		if let Some(c) = self.pending_control {
 			self.control_reg = c;
-			let write_enable = (c & 0x10) != 0;
-			if write_enable {
-				self.flash_lo.enable_writes();
-				self.flash_hi.enable_writes();
-			} else {
-				self.flash_lo.disable_writes();
-				self.flash_hi.disable_writes();
-			}
+
 			lines.exrom = (c & 0x02) == 0;
-			lines.game = (c & 0x01) == 0;
+			/* With M clear, the boot jumper holds GAME low. */
+			lines.game = (c & 0x04) != 0 && (c & 0x01) == 0;
 			self.pending_control = None;
 		}
 		if let Some(d) = self.pending_disable {

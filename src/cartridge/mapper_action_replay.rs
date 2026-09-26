@@ -30,6 +30,19 @@ impl ActionReplayMapper {
 	}
 }
 impl CartridgeMapper for ActionReplayMapper {
+	/* In mode $22 the cartridge SRAM and motherboard RAM both receive
+	 * writes at $8000, despite GAME and EXROM being released
+	 * (AR-NORDIC-MODE-MEASUREMENTS). */
+	fn independent_write_window(&self) -> Option<(u16, u16)> {
+		(self.enabled && !self.freeze_mode && self.reg_control & 0x23 == 0x22)
+			.then_some((0x8000, 0x9FFF))
+	}
+
+	/* The mode $22 hardware diagnostic records the OR of both active
+	 * RAM outputs, rather than either RAM alone (AR-NORDIC-MODE-MEASUREMENTS). */
+	fn contended_ram_window(&self) -> Option<(u16, u16)> {
+		self.independent_write_window()
+	}
 	/* Reset restores bank zero, enables the cartridge and leaves freeze RAM hidden until software or the freeze button selects it. */
 	fn reset(&mut self) {
 		self.reg_control = 0;
@@ -148,12 +161,7 @@ impl CartridgeMapper for ActionReplayMapper {
 			lines.game = false;
 			lines.exrom = true;
 		} else {
-			/* The special $22 combination requests RAM at $A000 while retaining the 8 KiB cartridge line state; all other values use bits 0-1 directly as the GAME/EXROM mode. */
-			let mode = if (self.reg_control & 0x23) == 0x22 {
-				0
-			} else {
-				self.reg_control & 0x03
-			};
+			let mode = self.reg_control & 0x03;
 			lines.game = (mode & 0x01) == 0;
 			lines.exrom = (mode & 0x02) != 0;
 		}

@@ -18,18 +18,18 @@ use super::constants::{
 };
 
 pub(super) struct TransientState {
-	pub(super) volume_conductance_code: f32,
 	pub(super) volume_fast_charge: f32,
 	pub(super) volume_slow_charge: f32,
-	pub(super) volume_fast_decay: f32,
-	pub(super) volume_slow_decay: f32,
 	pub(super) bypass_attack_charge: f32,
-	pub(super) previous_bypass_activity: f32,
-	pub(super) bypass_attack_decay: f32,
 	pub(super) pulse_gate_fast_charge: f32,
 	pub(super) pulse_gate_slow_charge: f32,
+	pub(super) volume_fast_decay: f32,
+	pub(super) volume_slow_decay: f32,
+	pub(super) bypass_attack_decay: f32,
 	pub(super) pulse_gate_fast_decay: f32,
 	pub(super) pulse_gate_slow_decay: f32,
+	pub(super) volume_conductance_code: f32,
+	pub(super) previous_bypass_activity: f32,
 	pub(super) pulse_gate_pending: bool,
 	pub(super) saw_mixer_blend: [f32; 3],
 	pub(super) saw_mixer_tracking: f32,

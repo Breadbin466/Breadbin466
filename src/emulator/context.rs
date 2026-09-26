@@ -47,7 +47,7 @@ impl AppContext {
 
 	/* PRG loading is scheduled through ActionManager rather than written into RAM immediately. This preserves the normal READY-prompt and keyboard-buffer sequencing used by runtime injection. */
 	pub fn open_prg(&mut self, path: PathBuf, autorun: bool) {
-		let Ok(data) = std::fs::read(&path) else {
+		let Ok(data) = crate::host_files::read(&path, 65536 + 2) else {
 			eprintln!("[PRG] Failed to read PRG image");
 			return;
 		};
@@ -96,7 +96,7 @@ impl AppContext {
 			eprintln!("[TAPE] Failed to persist the current TAP image before replacement: {error}");
 			return false;
 		}
-		let Ok(data) = std::fs::read(&path) else {
+		let Ok(data) = crate::host_files::read(&path, crate::datassette::constants::MAX_TAPE_SIZE) else {
 			eprintln!("[TAPE] Failed to read TAP image");
 			return false;
 		};
@@ -106,6 +106,7 @@ impl AppContext {
 		}
 		self.history.add(path.clone());
 		self.history.active_tap = Some(path);
+		self.menu.set_tape_transport(false, false);
 		self.history.save_forced();
 		self.menu.rebuild_recent(&self.history);
 		true
@@ -118,6 +119,8 @@ impl AppContext {
 			return false;
 		}
 		self.history.active_tap = None;
+		self.menu.set_tape_transport(false, false);
+		self.machine.memory.cia1.set_flag_pin(true);
 		self.history.save_forced();
 		true
 	}

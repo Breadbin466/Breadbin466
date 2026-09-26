@@ -2,13 +2,13 @@
 // src/cartridge/cartridge_device.rs — Cartridge manager and lifecycle control
 // =======================================================
 
-use std::fs::File;
-use std::io::{Read, Write};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::bus_configuration::{CartridgeConfiguration, IoRead};
-use super::constants::CRT_MAGIC;
+use super::constants::{CRT_MAGIC, MAX_CRT_SIZE, MAX_NVRAM_SIZE};
 use super::crt_loader::CrtImage;
 use super::mapper_creation::create_mapper;
 use super::mapper_interface::{CartridgeMapper, LineState, MapperType};
@@ -102,6 +102,9 @@ impl Cartridge {
 			roml_bank: bank,
 			romh_bank: bank,
 			phi2_ram: false,
+			contended_ram_window: self.mapper.contended_ram_window(),
+			exclusive_ram_window: self.mapper.exclusive_ram_window(),
+			independent_write_window: self.mapper.independent_write_window(),
 			irq_low: false,
 			nmi_low: self.nmi_low,
 		};
@@ -320,8 +323,7 @@ impl Cartridge {
 		if !path.is_file() {
 			return Err("File not found".into());
 		}
-		let mut data = Vec::new();
-		std::io::BufReader::new(File::open(path)?).read_to_end(&mut data)?;
+		let data = crate::host_files::read(path, MAX_CRT_SIZE)?;
 
 		let mut replacement = Self::new();
 		replacement.current_crt_path = Some(path.to_path_buf());
@@ -384,13 +386,8 @@ impl Cartridge {
 	pub fn load_associated_nvram(&mut self) {
 		if let Some(ref path) = self.current_crt_path {
 			let nvram_path = path.with_extension("sav");
-			if nvram_path.exists() {
-				if let Ok(mut f) = File::open(nvram_path) {
-					let mut buf = Vec::new();
-					if f.read_to_end(&mut buf).is_ok() {
-						self.mapper.load_nvram(&buf);
-					}
-				}
+			if let Ok(buf) = crate::host_files::read(&nvram_path, MAX_NVRAM_SIZE) {
+				self.mapper.load_nvram(&buf);
 			}
 		}
 	}
@@ -407,10 +404,16 @@ impl Cartridge {
 		let counter = NVRAM_COUNTER.fetch_add(1, Ordering::Relaxed);
 		let temporary = nvram_path.with_extension(format!("sav.{}.tmp", counter));
 		let backup = nvram_path.with_extension(format!("sav.{}.bak", counter));
+		/* An existing temporary path is never opened or removed: it may be a
+		 * symlink supplied alongside an untrusted cartridge image. */
+		let mut file = OpenOptions::new()
+			.write(true)
+			.create_new(true)
+			.open(&temporary)?;
 		let result = (|| -> std::io::Result<()> {
-			let mut file = File::create(&temporary)?;
 			file.write_all(&bytes)?;
 			file.sync_all()?;
+			drop(file);
 			if std::fs::rename(&temporary, &nvram_path).is_ok() {
 				return Ok(());
 			}

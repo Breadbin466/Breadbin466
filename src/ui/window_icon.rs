@@ -2,49 +2,54 @@
 // src/ui/window_icon.rs — Native application icon loading
 // =======================================================
 
-use std::io::Cursor;
+use std::io::Read;
 use winit::window::Icon;
 
 use crate::emulator::Result;
 
-const APPLICATION_ICON_PNG: &[u8] = include_bytes!("../../assets/Breadbin466.png");
+const ICON_WIDTH: u32 = 1024;
+const ICON_HEIGHT: u32 = 1024;
+const ICON_DICTIONARY_SIZE: u32 = 1024 * 1024;
+const APPLICATION_ICON: &[u8] = include_bytes!("../../assets/Breadbin466.rgba-delta.lzma2");
 
 /*
- * The desktop icon is embedded in the executable rather than resolved relative to
- * the current working directory. This keeps packaged, command-line and development
- * launches identical, and avoids silently falling back to a toolkit placeholder when
- * the process is started outside the repository root.
+ * The embedded asset preserves the original PNG's RGBA pixels without requiring a
+ * second compression library. Its raw LZMA2 stream uses a 1 MiB dictionary and
+ * contains 1024 × 1024 RGBA8 pixels, with each channel stored as the wrapping
+ * difference from the previous pixel in the same row. The first pixel of each
+ * row is unchanged. Dimensions and decompression bounds are fixed here because
+ * this is a bundled application resource, not an external image format.
  */
-pub fn load_window_icon() -> Result<Icon> {
-	let decoder = png::Decoder::new(Cursor::new(APPLICATION_ICON_PNG));
-	let mut reader = decoder.read_info()?;
-	let required = reader
-		.output_buffer_size()
-		.ok_or("The embedded application icon has no finite decoded size")?;
-	let mut pixels = vec![0; required];
-	let info = reader.next_frame(&mut pixels)?;
-
-	if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
-		return Err("The embedded application icon must be an 8-bit RGBA PNG".into());
+fn icon_pixels() -> Result<Vec<u8>> {
+	let mut reader = lzma_rust2::Lzma2Reader::new(APPLICATION_ICON, ICON_DICTIONARY_SIZE, None);
+	let mut pixels = vec![0; (ICON_WIDTH * ICON_HEIGHT * 4) as usize];
+	reader.read_exact(&mut pixels)?;
+	if reader.read(&mut [0])? != 0 {
+		return Err("The embedded application icon has an incorrect decoded size".into());
 	}
+	for row in pixels.chunks_exact_mut(ICON_WIDTH as usize * 4) {
+		for channel in 4..row.len() {
+			row[channel] = row[channel].wrapping_add(row[channel - 4]);
+		}
+	}
+	Ok(pixels)
+}
 
-	pixels.truncate(info.buffer_size());
-	Ok(Icon::from_rgba(pixels, info.width, info.height)?)
+pub fn load_window_icon() -> Result<Icon> {
+	Ok(Icon::from_rgba(icon_pixels()?, ICON_WIDTH, ICON_HEIGHT)?)
 }
 
 #[cfg(target_os = "linux")]
-pub fn load_gtk_icon() -> Result<gdk_pixbuf::Pixbuf> {
-	use gdk_pixbuf::prelude::PixbufLoaderExt;
-
-	/*
-	 * GTK owns the decorated Linux toplevel while winit owns only the embedded X11
-	 * rendering child. The icon must therefore also be applied to the GTK window;
-	 * setting it on the child alone cannot affect the desktop shell or task switcher.
-	 */
-	let loader = gdk_pixbuf::PixbufLoader::new();
-	loader.write(APPLICATION_ICON_PNG)?;
-	loader.close()?;
-	loader
-		.pixbuf()
-		.ok_or_else(|| "GTK could not decode the embedded application icon".into())
+pub fn load_gtk_icon() -> Result<gtk::gdk_pixbuf::Pixbuf> {
+	/* GTK owns the decorated toplevel; winit owns only its rendering child. */
+	let pixels = gtk::glib::Bytes::from_owned(icon_pixels()?);
+	Ok(gtk::gdk_pixbuf::Pixbuf::from_bytes(
+		&pixels,
+		gtk::gdk_pixbuf::Colorspace::Rgb,
+		true,
+		8,
+		ICON_WIDTH as i32,
+		ICON_HEIGHT as i32,
+		(ICON_WIDTH * 4) as i32,
+	))
 }

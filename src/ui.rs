@@ -12,6 +12,7 @@ pub mod about_macos;
 #[cfg(target_os = "windows")]
 pub mod about_windows;
 pub mod audio;
+mod audio_resampler;
 pub(crate) mod constants;
 #[cfg(target_os = "linux")]
 pub mod disk_dialog_linux;
@@ -20,8 +21,16 @@ pub mod disk_dialog_macos;
 #[cfg(target_os = "windows")]
 pub mod disk_dialog_windows;
 pub mod history;
+mod history_persistence;
 pub mod input;
 pub mod inspector;
+mod inspector_content;
+#[cfg(target_os = "linux")]
+mod inspector_linux;
+#[cfg(target_os = "macos")]
+mod inspector_macos;
+#[cfg(target_os = "windows")]
+mod inspector_windows;
 pub mod joystick;
 pub mod keyboard;
 pub mod menu;
@@ -34,6 +43,8 @@ pub mod menu_macos;
 pub mod menu_windows;
 pub mod mouse;
 pub mod osd;
+mod graphics;
+mod presentation;
 pub mod renderer;
 pub mod routing;
 pub mod shell;
@@ -44,6 +55,7 @@ pub mod shell_macos;
 #[cfg(target_os = "windows")]
 pub mod shell_windows;
 pub mod wav;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 pub mod window_icon;
 
 pub use audio::AudioHost;

@@ -36,9 +36,9 @@ impl Odometre {
 		let r_t = (self.r0 * self.r0
 			+ (self.v * self.thickness * current_t) / std::f64::consts::PI)
 			.sqrt();
-		/* Dividing the accumulated annular area by tape cross-section yields the number of layers and therefore reel revolutions. */
-		let total_turns =
-			(std::f64::consts::PI * (r_t * r_t - self.r0 * self.r0)) / (self.v * self.thickness);
+		/* Each reel turn adds one tape thickness to the wound radius.
+		 * Rationalising the radius difference avoids cancellation near zero. */
+		let total_turns = self.v * current_t / (std::f64::consts::PI * (r_t + self.r0));
 		let counter_units = total_turns / ODOMETRE_TURNS_PER_COUNTER_UNIT;
 
 		counter_units.clamp(0.0, ODOMETRE_MAX_VALUE)

@@ -35,11 +35,11 @@ impl Sprite {
 				self.mc = (self.mc + 1) & 63;
 			} else {
 				let addr = (self.pointer << 6).wrapping_add(self.mc);
-				self.fetch_buf[column] = vic_read(mem, addr, bank, cycle);
+				self.fetch_buf[column] = if column == 1 { vic_read(mem, addr, bank, cycle) } else { mem.vic_read_phi2(addr, bank, cycle) };
 				self.mc = (self.mc + 1) & 63;
 			}
 		} else if aec_low {
-			self.fetch_buf[column] = vic_read(mem, IDLE_ACCESS_ADDRESS, bank, cycle);
+			self.fetch_buf[column] = if column == 1 { vic_read(mem, IDLE_ACCESS_ADDRESS, bank, cycle) } else { mem.vic_read_phi2(IDLE_ACCESS_ADDRESS, bank, cycle) };
 		} else {
 			self.fetch_buf[column] = 0xFF;
 		}

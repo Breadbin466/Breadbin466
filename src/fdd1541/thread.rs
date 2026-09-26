@@ -86,7 +86,16 @@ impl DriveWorker {
 	#[inline(always)]
 	pub(super) fn publish_host_cycle(&self, cycle: u64) {
 		if cycle > self.cable.host_cycle.0.load(Ordering::Relaxed) {
-			self.cable.host_cycle.0.store(cycle, Ordering::Relaxed);
+			self.cable.host_cycle.0.store(cycle, Ordering::Release);
+			self.wake_worker();
+		}
+	}
+
+	/* The waiting flag couples clock publication to park/unpark. Its atomic
+	 * exchange closes the race between announcing sleep and checking work. */
+	fn wake_worker(&self) {
+		if self.cable.waiting.swap(false, Ordering::AcqRel) {
+			if let Some(worker) = &self.thread { worker.thread().unpark(); }
 		}
 	}
 
@@ -279,6 +288,7 @@ impl DriveWorker {
 		self.request_tx
 			.send(request)
 			.expect("1541 worker request channel disconnected");
+		self.wake_worker();
 	}
 
 	pub(super) fn receive(&self) -> Response {
@@ -311,6 +321,7 @@ impl Drop for DriveWorker {
 		}
 		self.cable.stopping.store(true, Ordering::Release);
 		let _ = self.request_tx.send(Request::Shutdown);
+		self.wake_worker();
 		if let Some(thread) = self.thread.take() {
 			let _ = thread.join();
 		}
@@ -328,11 +339,13 @@ fn worker_main(
 	let mut emitted = 0u64;
 	let mut host_state = 0u32;
 	let mut published = 0u32;
-	let mut idle_polls = 0u32;
+	let mut pending_request = None;
 	let mut paused = false;
 
 	loop {
-		let request = if paused {
+		let request = if let Some(request) = pending_request.take() {
+			Ok(request)
+		} else if paused {
 			match request_rx.recv_timeout(Duration::from_millis(100)) {
 				Ok(request) => Ok(request),
 				Err(mpsc::RecvTimeoutError::Timeout) => continue,
@@ -446,7 +459,7 @@ fn worker_main(
 		}
 
 		let Some(active_drive) = drive.as_mut() else {
-			thread::park_timeout(Duration::from_micros(100));
+			pending_request = wait_for_work(&cable, &request_rx, None);
 			continue;
 		};
 
@@ -457,17 +470,9 @@ fn worker_main(
 			continue;
 		}
 		if emitted == target {
-			idle_polls = idle_polls.saturating_add(1);
-			if idle_polls < 4096 {
-				spin_loop();
-			} else if idle_polls < 65536 {
-				thread::yield_now();
-			} else {
-				thread::sleep(Duration::from_micros(100));
-			}
+			pending_request = wait_for_work(&cable, &request_rx, Some(emitted));
 			continue;
 		}
-		idle_polls = 0;
 
 		let batch_end = target.min(emitted.wrapping_add(DRIVE_BATCH_LIMIT));
 		while emitted < batch_end {
@@ -485,4 +490,28 @@ fn worker_main(
 		}
 		cable.drive_cycle.0.store(emitted, Ordering::Relaxed);
 	}
+}
+/* Waiting changes host scheduling only: the drive still executes every
+ * published emulated cycle. Requests are rechecked after announcing sleep,
+ * so a command queued before that announcement cannot lose its wakeup. */
+fn wait_for_work(cable: &IecCable, requests: &Receiver<Request>, emitted: Option<u64>) -> Option<Request> {
+	cable.waiting.swap(true, Ordering::AcqRel);
+	match requests.try_recv() {
+		Ok(request) => {
+			cable.waiting.swap(false, Ordering::AcqRel);
+			return Some(request);
+		}
+		Err(TryRecvError::Disconnected) => {
+			cable.waiting.swap(false, Ordering::AcqRel);
+			return None;
+		}
+		Err(TryRecvError::Empty) => {}
+	}
+	if !cable.stopping.load(Ordering::Acquire)
+		&& emitted.is_none_or(|cycle| cable.host_cycle.0.load(Ordering::Acquire) == cycle)
+	{
+		thread::park();
+	}
+	cable.waiting.swap(false, Ordering::AcqRel);
+	None
 }

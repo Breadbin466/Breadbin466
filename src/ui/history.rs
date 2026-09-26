@@ -6,7 +6,6 @@ use crate::motherboard::bus::DriveMode;
 use crate::ui::constants::{MAX_RECENT, SAVE_DEBOUNCE_SECS};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -81,8 +80,8 @@ impl History {
 		if let Some(config_dir) = Self::resolve_config_dir() {
 			let config_path = config_dir.join("recent_v2.json");
 			if config_path.exists() {
-				if let Ok(content) = fs::read_to_string(config_path) {
-					if let Ok(mut history) = serde_json::from_str::<Self>(&content) {
+				if let Ok(content) = crate::host_files::read(&config_path, 1024 * 1024) {
+					if let Ok(mut history) = serde_json::from_slice::<Self>(&content) {
 						history.dirty = false;
 						history.last_save = Some(Instant::now());
 						return history;
@@ -175,15 +174,15 @@ impl History {
 	}
 
 	fn write_to_disk(&mut self) {
-		if let Some(config_dir) = Self::resolve_config_dir() {
-			if std::fs::create_dir_all(&config_dir).is_ok() {
-				let config_path = config_dir.join("recent_v2.json");
-				let json = serde_json::to_string_pretty(self).unwrap_or_default();
-				if fs::write(config_path, json).is_ok() {
-					self.dirty = false;
-					self.last_save = Some(Instant::now());
-				}
-			}
+		let result = (|| -> crate::emulator::Result<()> {
+			let directory = Self::resolve_config_dir().ok_or("Configuration directory unavailable")?;
+			let json = serde_json::to_vec_pretty(self)?;
+			super::history_persistence::replace(&directory.join("recent_v2.json"), &json)?;
+			Ok(())
+		})();
+		match result {
+			Ok(()) => { self.dirty = false; self.last_save = Some(Instant::now()); }
+			Err(error) => eprintln!("[CONFIG] Configuration save failed: {error}"),
 		}
 	}
 

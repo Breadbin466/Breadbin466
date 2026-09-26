@@ -4,11 +4,12 @@
 
 use crate::ui::constants::{
 	CHAR_ROM, COLOR_LED_GREEN_OFF, COLOR_LED_GREEN_ON, COLOR_LED_RED_OFF, COLOR_LED_RED_ON,
-	COLOR_REVERSE_BG, COLOR_REVERSE_FG, COLOR_TEXT, COLOR_TRANSPORT_OFF, COLOR_TRANSPORT_ON,
+	COLOR_REVERSE_BG, COLOR_REVERSE_FG, COLOR_TEXT, COLOR_TRANSPORT_OFF, COLOR_TRANSPORT_PLAY,
+	COLOR_TRANSPORT_READY, COLOR_TRANSPORT_RECORD_ON,
 	FONT_OFFSET_LOWER, FONT_OFFSET_UPPER, LINE_HEIGHT, OSD_MEDIA_LABEL_OVERHEAD,
 	OSD_SAFE_PADDING_X, OSD_TOOLTIP_BACKGROUND, OSD_TOOLTIP_BORDER, OSD_TOOLTIP_PADDING_X,
-	OSD_TOOLTIP_PADDING_Y, PETSCII_CIRCLE, PETSCII_DIAMOND, PETSCII_EJECT, PETSCII_FWD,
-	PETSCII_REWIND, PETSCII_STOP,
+	OSD_TOOLTIP_PADDING_Y, PETSCII_CIRCLE, OSD_TRANSPORT_COUNT, OSD_TRANSPORT_PITCH,
+	OSD_TRANSPORT_RIGHT,
 };
 /* OsdMonitor is a stateless façade retained by the orchestrator; all visible state for one frame is carried explicitly in OsdData. */
 pub struct OsdMonitor;
@@ -64,10 +65,11 @@ pub fn draw_status_bar(
 		&osd.tape_label,
 		&osd.cart_label,
 	);
-	let mut line2 = format!(
-		"{:5.3} FPS - {:5.3} MHz - Joystick: {}",
-		osd.fps, osd.mhz, osd.joy_status
-	);
+	let mut line2 = if osd.fps > 0.0 {
+		format!("{:5.3} FPS - {:5.3} MHz - Joystick: {}", osd.fps, osd.mhz, osd.joy_status)
+	} else {
+		format!("-- FPS - -- MHz - Joystick: {}", osd.joy_status)
+	};
 	if osd.mouse_active {
 		line2.push_str(" - Mouse: Active (Port 1)");
 	}
@@ -116,33 +118,32 @@ pub fn draw_status_bar(
 		}
 	}
 
-	let transport_x = width.saturating_sub(134 + OSD_SAFE_PADDING_X);
-
-	let transport = [
-		(PETSCII_CIRCLE, FONT_OFFSET_UPPER, osd.record_on),
-		(PETSCII_DIAMOND, FONT_OFFSET_UPPER, osd.play_on),
-		(PETSCII_REWIND, FONT_OFFSET_LOWER, false),
-		(PETSCII_FWD, FONT_OFFSET_LOWER, false),
-		(PETSCII_STOP, FONT_OFFSET_UPPER, false),
-		(PETSCII_EJECT, FONT_OFFSET_UPPER, !osd.has_tape),
-	];
-
-	for (i, &(glyph, font, active)) in transport.iter().enumerate() {
-		let col = if active {
-			COLOR_TRANSPORT_ON
-		} else {
+	let transport_x = transport_left(width);
+	for (index, icon) in TRANSPORT_ICONS.iter().enumerate() {
+		let color = if !osd.has_tape {
 			COLOR_TRANSPORT_OFF
+		} else if index == 0 && osd.record_on && osd.play_on {
+			COLOR_TRANSPORT_RECORD_ON
+		} else if index == 1 && osd.play_on {
+			COLOR_TRANSPORT_PLAY
+		} else {
+			COLOR_TRANSPORT_READY
 		};
-		draw_char_colored(
-			buffer,
-			width,
-			height,
-			transport_x + i * 8,
-			text_y2,
-			glyph,
-			font,
-			col,
-		);
+		let x = transport_x + index * OSD_TRANSPORT_PITCH + 2;
+		for (row, bits) in icon.iter().enumerate() {
+			for column in 0..8 {
+				if bits & (0x80 >> column) != 0 && x + column < width && text_y2 + row < height {
+					buffer[(text_y2 + row) * width + x + column] = color;
+				}
+			}
+		}
+	}
+	if let Some((x, y)) = osd.hover_cursor {
+		if let Some(index) = transport_hit(width, height, gui_height, x, y) {
+			let label = TRANSPORT_LABELS[index];
+			let tooltip = if osd.has_tape { label.to_string() } else { format!("{label} (no tape)") };
+			draw_tooltip(buffer, width, height, bar_y1, x, &tooltip);
+		}
 	}
 
 	draw_analog_tape_counter(
@@ -198,6 +199,35 @@ pub fn draw_status_bar(
 		FONT_OFFSET_UPPER,
 		power_color,
 	);
+}
+
+/* Each eight-pixel bitmap has its own transport silhouette. Rendering and
+ * pointer routing share twelve-pixel cells, including the surrounding space.
+ * The counter retains its original PETSCII typography and position. */
+const TRANSPORT_ICONS: [[u8; 8]; OSD_TRANSPORT_COUNT] = [
+	[0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00],
+	[0x40, 0x60, 0x70, 0x78, 0x78, 0x70, 0x60, 0x40],
+	[0x00, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x00],
+	[0x00, 0x22, 0x66, 0xEE, 0xEE, 0x66, 0x22, 0x00],
+	[0x00, 0x88, 0xCC, 0xEE, 0xEE, 0xCC, 0x88, 0x00],
+	[0x18, 0x3C, 0x7E, 0xFF, 0x00, 0xFF, 0xFF, 0x00],
+];
+const TRANSPORT_LABELS: [&str; OSD_TRANSPORT_COUNT] = [
+	"Record", "Play", "Stop", "Rewind", "Fast forward", "Eject",
+];
+
+fn transport_left(width: usize) -> usize {
+	width.saturating_sub(OSD_TRANSPORT_RIGHT + OSD_TRANSPORT_COUNT * OSD_TRANSPORT_PITCH + OSD_SAFE_PADDING_X)
+}
+
+pub(crate) fn transport_hit(width: usize, height: usize, gui_height: usize, x: usize, y: usize) -> Option<usize> {
+	let top = height.checked_sub(gui_height)? + 12;
+	if x >= width || y < top || y >= height || y >= top + 12 {
+		return None;
+	}
+	let offset = x.checked_sub(transport_left(width))?;
+	let index = offset / OSD_TRANSPORT_PITCH;
+	(index < OSD_TRANSPORT_COUNT).then_some(index)
 }
 
 struct MediaLineLayout {

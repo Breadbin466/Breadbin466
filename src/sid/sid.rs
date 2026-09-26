@@ -23,9 +23,6 @@ pub struct Mos6581 {
 	data_bus: InternalDataBus,
 	/* Last fully filtered cycle-domain sample, retained for inspection and reset bookkeeping. */
 	last_sample: i32,
-	/* Rendering may be suppressed without freezing chip time, while clocking_enabled stops the SID entirely for machine-level pause and reset control. */
-	pub rendering_enabled: bool,
-	pub clocking_enabled: bool,
 	/* POTX and POTY are externally supplied conversion results; the SID core only returns their most recently latched values. */
 	pub pot_x: u8,
 	pub pot_y: u8,
@@ -42,8 +39,6 @@ impl Mos6581 {
 			filter: Filter::new(),
 			data_bus: InternalDataBus::new(),
 			last_sample: 0,
-			rendering_enabled: true,
-			clocking_enabled: true,
 			pot_x: 0xff,
 			pot_y: 0xff,
 		}
@@ -62,12 +57,9 @@ impl Mos6581 {
 		self.last_sample = 0;
 	}
 
-	/* One call represents one PHI2 cycle. Clocking may continue while rendering is disabled so oscillator phase, sync and envelopes remain temporally correct during muted or fast-forward operation. */
+	/* One call advances the complete digital and analogue SID by one PHI2 cycle. The motherboard controls whether accelerated execution schedules this call. */
 	#[inline(always)]
-	pub fn tick(&mut self) -> Option<i32> {
-		if !self.clocking_enabled {
-			return None;
-		}
+	pub fn tick(&mut self) -> i32 {
 		self.data_bus.clock();
 
 		let [oscillator_0, oscillator_1, oscillator_2] = &mut self.oscillators;
@@ -110,12 +102,6 @@ impl Mos6581 {
 			oscillator_0.synchronise();
 		}
 
-		/* Host muting suppresses only analogue rendering. Waveform feedback
-		 * and readable OSC3 state remain clocked with the machine. */
-		if !self.rendering_enabled {
-			return None;
-		}
-
 		let level_0 = envelope_0.volume;
 		let level_1 = envelope_1.volume;
 		let level_2 = envelope_2.volume;
@@ -139,7 +125,7 @@ impl Mos6581 {
 		);
 
 		self.last_sample = self.filter.clock([voice_0, voice_1, voice_2]);
-		Some(self.last_sample)
+		self.last_sample
 	}
 
 	/* Feeds the EXT IN pin into the same routing and filter topology as the three internal voices. EXT IN is sampled into the filter path independently of register writes and is consumed on subsequent SID clocks. */
@@ -184,11 +170,15 @@ impl Mos6581 {
 	#[inline(always)]
 	/* A voice control write reaches oscillator and envelope in the same bus transaction because TEST, SYNC, RING, waveform selection and GATE share one physical register. */
 	fn write_voice_control(&mut self, voice: usize, value: u8) {
-		if value & 0xf1 == 0x41 {
-			self.filter.mark_pure_pulse_gate_rise();
-		}
-		if value & 0xf1 == 0x21 {
-			self.filter.mark_pure_saw_gate_rise(voice);
+		/* Rewriting a held GATE does not retrigger the analogue attack
+		 * transient. Use the input latch, not the delayed envelope state. */
+		if value & 0x01 != 0 && !self.envelopes[voice].gate_is_high() {
+			if value & 0xf1 == 0x41 {
+				self.filter.mark_pure_pulse_gate_rise();
+			}
+			if value & 0xf1 == 0x21 {
+				self.filter.mark_pure_saw_gate_rise(voice);
+			}
 		}
 		self.oscillators[voice].write_control(value);
 		self.envelopes[voice].set_gate(value & 0x01 != 0);

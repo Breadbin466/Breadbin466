@@ -908,8 +908,8 @@ impl Debugger {
 	fn print_sid(&self, context: &AppContext) {
 		let sid = &context.machine.memory.sid;
 		println!(
-			"SID clocking={} rendering={} POTX=${:02X} POTY=${:02X}",
-			sid.clocking_enabled, sid.rendering_enabled, sid.pot_x, sid.pot_y
+			"SID POTX=${:02X} POTY=${:02X}",
+			sid.pot_x, sid.pot_y
 		);
 		for i in 0..3 {
 			println!(

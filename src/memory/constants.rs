@@ -19,6 +19,7 @@ pub const RESET_VECTOR: u16 = 0xFFFC;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapRegion {
 	Ram,
+	ContendedCartridgeRam,
 	Basic,
 	Kernal,
 	Char,

@@ -9,7 +9,7 @@ use crate::ui::constants::{
 use std::ffi::c_void;
 use std::sync::{Mutex, OnceLock};
 
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
 	CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, COLOR_WINDOW, CreateFontW, DEFAULT_CHARSET,

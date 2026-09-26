@@ -16,6 +16,7 @@ use super::mapper_interface::{CartridgeMapper, MapperType};
 use super::mapper_kcs_power::KCSMapper;
 use super::mapper_magic_desk::MagicDeskMapper;
 use super::mapper_ocean::OceanMapper;
+use super::mapper_pagefox::PagefoxMapper;
 use super::mapper_retro_replay::RetroReplayMapper;
 use super::mapper_rgcd::RgcdMapper;
 use super::mapper_simons_basic::SimonsBasicMapper;
@@ -58,6 +59,7 @@ pub fn create_mapper(kind: MapperType) -> Box<dyn CartridgeMapper> {
 		MapperType::EasyFlash3 => Box::new(EasyFlashMapper::new(MapperType::EasyFlash3)),
 		MapperType::RetroReplay => Box::new(RetroReplayMapper::new()),
 		MapperType::RGCD => Box::new(RgcdMapper::new()),
+		MapperType::Pagefox => Box::new(PagefoxMapper::new()),
 		MapperType::GMod2 => Box::new(GMod2Mapper::new()),
 	}
 }

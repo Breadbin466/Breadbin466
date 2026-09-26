@@ -33,7 +33,7 @@ impl ROMStorage {
 
 	/* A custom character image is validated against the physical 4 KiB socket before replacing the active contents. */
 	pub fn load_custom_char_rom(&mut self, path: &Path) -> crate::emulator::Result<()> {
-		let data = std::fs::read(path)?;
+		let data = crate::host_files::read(path, CHAR_ROM_SIZE)?;
 		if data.len() != CHAR_ROM_SIZE {
 			return Err(format!("Character ROM must be exactly {} bytes", CHAR_ROM_SIZE).into());
 		}
@@ -43,7 +43,7 @@ impl ROMStorage {
 
 	/* A custom BASIC image replaces only its 8 KiB socket, preserving the other two system ROMs. */
 	pub fn load_custom_basic_rom(&mut self, path: &Path) -> crate::emulator::Result<()> {
-		let data = std::fs::read(path)?;
+		let data = crate::host_files::read(path, BASIC_ROM_SIZE)?;
 		if data.len() != BASIC_ROM_SIZE {
 			return Err(format!("BASIC ROM must be exactly {} bytes", BASIC_ROM_SIZE).into());
 		}
@@ -53,7 +53,7 @@ impl ROMStorage {
 
 	/* A custom KERNAL image replaces only its 8 KiB socket, preserving BASIC and character ROM contents. */
 	pub fn load_custom_kernal_rom(&mut self, path: &Path) -> crate::emulator::Result<()> {
-		let data = std::fs::read(path)?;
+		let data = crate::host_files::read(path, KERNAL_ROM_SIZE)?;
 		if data.len() != KERNAL_ROM_SIZE {
 			return Err(format!("KERNAL ROM must be exactly {} bytes", KERNAL_ROM_SIZE).into());
 		}

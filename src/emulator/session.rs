@@ -18,7 +18,7 @@ pub(super) fn restore_media(driver: &mut Orchestrator, cli_has_disk: bool, cli_h
 	}
 	if !cli_has_tap {
 		if let Some(path) = driver.context.history.active_tap.clone() {
-			let restored = std::fs::read(&path)
+			let restored = crate::host_files::read(&path, crate::datassette::constants::MAX_TAPE_SIZE)
 				.ok()
 				.is_some_and(|data| driver.context.datassette.load_tap(data, path));
 			if !restored {

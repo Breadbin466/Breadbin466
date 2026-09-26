@@ -2,16 +2,15 @@
 // src/emulator/orchestrator.rs — System Master Orchestrator loop
 // =======================================================
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::KeyCode;
-use winit::window::WindowId;
 
 use super::Result;
 use super::builder::SystemBuilder;
-use super::constants::STARTUP_COMMAND_DELAY_FRAMES;
+use super::constants::{STARTUP_COMMAND_DELAY_FRAMES, WARP_SERVICE_BUDGET};
 use super::context::AppContext;
 use super::debugger::Debugger;
 use super::timing::TimeKeeper;
@@ -35,6 +34,8 @@ pub struct Orchestrator {
 	pub(super) osd_cursor_pos: (f64, f64),
 	pub(super) mouse_host: MouseHost,
 	pub(super) frame_counter: u64,
+	rate_warping: bool,
+	last_host_update: Instant,
 	pub inspector: Option<InspectorWindow>,
 	pub inspector_requested: bool,
 	pub is_dark_mode: bool,
@@ -76,6 +77,8 @@ impl Orchestrator {
 			osd_cursor_pos: (-1.0, -1.0),
 			mouse_host: MouseHost::new(),
 			frame_counter: 0,
+			rate_warping: false,
+			last_host_update: Instant::now(),
 			inspector: None,
 			inspector_requested: command_line.inspector,
 			is_dark_mode,
@@ -245,6 +248,7 @@ impl Orchestrator {
 	}
 
 	pub fn handle_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+		self.recover_host_stall();
 		let connected = self.context.machine.mouse_1351_connected();
 		let over_display = self.mouse_host.over_display();
 
@@ -278,8 +282,7 @@ impl Orchestrator {
 
 		self.paused = false;
 		self.context.machine.set_paused(false);
-		self.timing.resynchronise();
-		self.context.input.clear_all();
+		self.resynchronise_host();
 		let pause_id = self.context.menu.ids.pause.clone();
 		self.context.menu.set_checked(&pause_id, false);
 		true
@@ -289,60 +292,50 @@ impl Orchestrator {
 		InputRouter::handle_mouse_click(self.osd_cursor_pos, &mut self.context);
 	}
 
-	pub fn open_inspector(&mut self, application: &ActiveEventLoop) {
-		if self.inspector.is_some() {
+	pub fn open_inspector(&mut self, _application: &ActiveEventLoop) {
+		if let Some(inspector) = self.inspector.as_ref().filter(|i| i.is_open()) {
+			inspector.show();
 			return;
 		}
-		let instance = self.context.renderer.gpu_instance();
-		let adapter = self.context.renderer.gpu_adapter().clone();
-		let device = self.context.renderer.gpu_device();
-		let queue = self.context.renderer.gpu_queue();
-		match InspectorWindow::new(
-			application,
-			instance,
-			&adapter,
-			device,
-			queue,
-			wgpu::TextureFormat::Bgra8Unorm,
-		) {
-			Ok(win) => self.inspector = Some(win),
-			Err(e) => println!("Inspector window error: {}", e),
+		match InspectorWindow::new(&self.context.window) {
+			Ok(inspector) => { self.inspector = Some(inspector); self.redraw_inspector(); }
+			Err(error) => eprintln!("[INSPECTOR] {error}"),
 		}
 	}
 
-	pub fn close_inspector(&mut self) {
-		self.inspector = None;
-	}
-
-	pub fn is_inspector_window(&self, id: WindowId) -> bool {
-		self.inspector
-			.as_ref()
-			.map(|i| i.id() == id)
-			.unwrap_or(false)
-	}
+	pub fn close_inspector(&mut self) { self.inspector = None; }
 
 	pub fn redraw_inspector(&mut self) {
 		super::snapshot::redraw_inspector(self);
 	}
 
-	/* update is the frame-level service loop. It samples host input, updates CIA-visible controls, decides warp policy, runs the required machine frames, and requests presentation only when TimeKeeper says a host frame is due. */
-	pub fn update(&mut self) {
-		/* Debugger commands are consumed only at the host service boundary, where the
-		 * motherboard is quiescent. Temporarily taking ownership avoids aliasing the
-		 * debugger with AppContext while a command inspects or mutates machine state. */
-		if let Some(mut debugger) = self.debugger.take() {
-			debugger.poll_commands(&mut self.context);
-			let debugger_paused = debugger.paused;
-			self.debugger = Some(debugger);
-			if debugger_paused {
-				self.context.input.clear_frame();
-				return;
-			}
+	/* Focus loss releases host-owned levels immediately, including while paused.
+	 * Physical joystick state is still sampled through its normal routing. */
+	pub fn handle_focus_lost(&mut self) {
+		self.context.input.clear_all();
+		self.handle_cursor_left();
+		self.update_machine_input();
+	}
+
+	/* Host interruptions do not represent elapsed C64 time. Resume from the
+	 * current machine state with fresh pacing and no queued pre-interruption sound. */
+	pub fn resynchronise_host(&mut self) {
+		self.last_host_update = Instant::now();
+		self.timing.resynchronise();
+		self.context.machine.vic.telemetry.restart_rate_window();
+		self.handle_focus_lost();
+		if let Some(audio) = self.context.audio.as_mut() { audio.discard_pending(); }
+	}
+
+	/* Recover before accepting a fresh input event so the stale-state reset
+	 * cannot erase the key or button which woke the host event loop. */
+	fn recover_host_stall(&mut self) {
+		if !self.paused && self.last_host_update.elapsed() > super::constants::HOST_STALL_THRESHOLD {
+			self.resynchronise_host();
 		}
-		if self.paused {
-			self.context.input.clear_frame();
-			return;
-		}
+	}
+
+	fn update_machine_input(&mut self) {
 		let (j1, j2) = self
 			.context
 			.joystick
@@ -372,37 +365,78 @@ impl Orchestrator {
 				.map_keyboard_to_cia(&mut m.memory.cia1, virtual_mode);
 		}
 
+	}
+
+	/* update is the frame-level service loop. It samples host input, updates CIA-visible controls, decides warp policy, runs the required machine frames, and publishes completed images directly to the presentation worker when TimeKeeper permits. Native repaint events remain independent of machine execution. */
+	pub fn update(&mut self) -> Result<()> {
+		self.recover_host_stall();
+		self.last_host_update = Instant::now();
+		if let Some(audio) = self.context.audio.as_mut() { audio.service(); }
+		if self.inspector.as_ref().is_some_and(|i| !i.is_open()) { self.inspector = None; }
+		if self.inspector.as_ref().is_some_and(|i| i.needs_snapshot()) { self.redraw_inspector(); }
+		/* Debugger commands are consumed only at the host service boundary, where the
+		 * motherboard is quiescent. Temporarily taking ownership avoids aliasing the
+		 * debugger with AppContext while a command inspects or mutates machine state. */
+		if let Some(mut debugger) = self.debugger.take() {
+			debugger.poll_commands(&mut self.context);
+			let debugger_paused = debugger.paused;
+			self.debugger = Some(debugger);
+			if debugger_paused {
+				self.context.input.clear_frame();
+				return Ok(());
+			}
+		}
+		if self.paused {
+			self.context.input.clear_frame();
+			return Ok(());
+		}
+		/* Leave input edges pending until a machine frame is due. The event
+		 * loop can deliver newer input while waiting for the PAL deadline. */
 		let drive_busy = self.context.machine.drive_busy_led();
 		let warping = self.timing.is_warping(drive_busy);
+		if warping != self.rate_warping {
+			self.timing.resynchronise();
+			if let Some(audio) = self.context.audio.as_mut() { audio.discard_pending(); }
+			self.context.machine.vic.telemetry.restart_rate_window();
+			self.rate_warping = warping;
+		}
+		let steps = if warping { 0 } else { self.timing.calculate_frames_to_run(drive_busy) };
+		if !warping && steps == 0 {
+			return Ok(());
+		}
+
+		self.update_machine_input();
+
 		self.context.machine.set_drive_warp_execution(warping);
-		if warping {
+		let present = if warping {
 			let start = Instant::now();
 			self.context.machine.set_video_composition(false);
-			while start.elapsed() < Duration::from_millis(16) {
+			loop {
 				self.run_single_frame();
+				if start.elapsed() >= WARP_SERVICE_BUDGET { break; }
 			}
 			self.context.machine.set_video_composition(true);
-			self.run_single_frame();
+			/* Return to native input frequently, but compose a visible frame only
+			 * when publication is due. All intervening VIC cycles still execute. */
+			let present = self.timing.should_present(drive_busy);
+			if present { self.run_single_frame(); }
+			present
 		} else {
 			self.context.machine.set_video_composition(true);
-			let steps = self.timing.calculate_frames_to_run(drive_busy);
 			for _ in 0..steps {
 				self.run_single_frame();
 			}
-		}
+			self.timing.should_present(drive_busy)
+		};
 
 		self.context.input.clear_frame();
 
-		if self.timing.should_present(drive_busy) {
-			self.context.window.request_redraw();
+		if present {
+			/* The GPU worker can consume this image immediately; routing it through
+			 * another native redraw event would defer an already completed frame. */
+			self.draw_frame()?;
 		}
-
-		if self.inspector.is_some() {
-			self.redraw_inspector();
-			if let Some(inspector) = self.inspector.as_ref() {
-				inspector.request_redraw();
-			}
-		}
+		Ok(())
 	}
 
 	/*
@@ -479,20 +513,12 @@ impl Orchestrator {
 		play_pressed: bool,
 		mut motor_on: bool,
 	) {
-		let record_pressed = self.context.datassette.record_pressed;
 		let debugger_active = self.debugger.is_some();
 
 		for _ in 0..CYCLES_PER_FRAME {
-			if play_pressed && motor_on {
-				if record_pressed {
-					let cassette_write = self.context.machine.cpu.port.cassette_write;
-					self.context.datassette.record_cycle_tick(cassette_write);
-				} else if self.context.datassette.clock_tick(motor_on) {
-					self.context.machine.memory.cia1.set_flag_pin(false);
-				} else if self.context.datassette.state == crate::datassette::TapeState::Idle {
-					self.context.machine.memory.cia1.set_flag_pin(true);
-				}
-			}
+			let write_level = self.context.machine.cpu.port.cassette_write;
+			let read_level = self.context.datassette.tick(motor_on, write_level);
+			self.context.machine.memory.cia1.set_flag_pin(read_level);
 
 			if debugger_active {
 				if !self.run_debugger_cycle(C128_DEBUG, REU_ENABLED) {
@@ -526,6 +552,7 @@ impl Orchestrator {
 
 	/* A single frame keeps machine execution, datassette transport, audio production and post-frame actions in one ordered unit so host scheduling cannot interleave them inconsistently. */
 	fn run_single_frame(&mut self) {
+		self.context.machine.vic.telemetry.begin_frame();
 		let drive_busy = self.context.machine.drive_busy_led();
 		let global_mute = self.context.history.mute_enabled;
 		let warp_mute = self.timing.is_warping(drive_busy) && self.mute_sid_warp;
@@ -534,14 +561,11 @@ impl Orchestrator {
 		let produce_audio = render_audio || capture_audio;
 
 		self.context.machine.set_audio_rendering(produce_audio);
-		self.context
-			.machine
-			.set_sid_clocking(!warp_mute || capture_audio);
+		self.context.machine.set_sid_clocking(!warp_mute || capture_audio);
 		self.context.machine.audio_buffer_storage.clear();
 
 		let has_tape = self.context.datassette.has_tape();
 		let play_pressed = self.context.datassette.play_pressed;
-		let is_recording = self.context.datassette.record_pressed && play_pressed;
 
 		{
 			let total_cycles = self.context.machine.clock.total_cycles;
@@ -573,8 +597,12 @@ impl Orchestrator {
 			}
 		}
 
-		if has_tape && is_recording {
-			if let Err(error) = self.context.datassette.save_tape_to_host() {
+		if has_tape {
+			if let Some(error) = self.context.datassette.take_recording_error() {
+				eprintln!("[TAPE] {error}");
+				self.context.menu.set_tape_transport(false, false);
+			}
+			if let Err(error) = self.context.datassette.flush_if_requested() {
 				eprintln!("[TAPE] Failed to persist TAP image: {error}");
 			}
 		}
@@ -601,7 +629,7 @@ impl Orchestrator {
 		}
 
 		if render_audio {
-			if let Some(audio) = &self.context.audio {
+			if let Some(audio) = &mut self.context.audio {
 				audio.push_samples(self.context.machine.audio_buffer());
 			}
 		}
@@ -703,7 +731,7 @@ impl Orchestrator {
 
 		self.context
 			.renderer
-			.draw(self.context.machine.vic.get_framebuffer(), &osd_data)
+			.draw(self.context.machine.vic.get_framebuffer(), osd_data)
 	}
 
 	/* User resizing is constrained before the GPU surface is reconfigured. This keeps the host window and the emulated presentation in the same proportion instead of merely letterboxing a wrongly shaped window. The corrective request produces one follow-up resize event, which is accepted once its integer dimensions are within the renderer's one-pixel tolerance. */
@@ -757,6 +785,7 @@ impl Orchestrator {
 	}
 
 	pub fn handle_input_event(&mut self, key: KeyCode, state: ElementState) {
+		self.recover_host_stall();
 		self.context.input.update_key(key, state);
 	}
 
@@ -769,7 +798,15 @@ impl Orchestrator {
 		super::commands::handle_menu_event(self, id);
 	}
 
+	pub fn is_warping(&self) -> bool {
+		self.timing.is_warping(self.context.machine.drive_busy_led())
+	}
+
 	pub fn get_next_frame_time(&self) -> Instant {
-		self.timing.get_next_frame_time()
+		if self.timing.is_warping(self.context.machine.drive_busy_led()) {
+			Instant::now()
+		} else {
+			self.timing.get_next_frame_time()
+		}
 	}
 }

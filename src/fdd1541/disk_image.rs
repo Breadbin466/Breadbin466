@@ -2,11 +2,15 @@
 // src/fdd1541/disk_image.rs — Disk-image format identity and transactional replacement
 // =======================================================
 
-use std::fs::{self, File};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/* Even 84 maximum-length G64 records and their speed maps fit below this
+ * container bound; compressed formats retain their own decoded-size checks. */
+pub(crate) const MAX_IMAGE_SIZE: usize = 16 * 1024 * 1024;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -66,10 +70,13 @@ pub(crate) fn replace_atomically(path: &Path, bytes: &[u8]) -> bool {
 	let Some(temp) = temp_path(path, "image") else {
 		return false;
 	};
+	let Ok(mut file) = OpenOptions::new().write(true).create_new(true).open(&temp) else {
+		return false;
+	};
 	let write_result = (|| -> std::io::Result<()> {
-		let mut file = File::create(&temp)?;
 		file.write_all(bytes)?;
 		file.sync_all()?;
+		drop(file);
 		Ok(())
 	})();
 	if write_result.is_err()

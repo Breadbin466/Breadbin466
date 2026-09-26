@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
 	AppendMenuW, CallWindowProcW, CreateMenu, CreatePopupMenu, DestroyMenu, DrawMenuBar,

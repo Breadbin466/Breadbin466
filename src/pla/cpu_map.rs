@@ -57,6 +57,16 @@ impl CpuWriteSelection {
 	}
 
 	#[inline(always)]
+	pub fn with_cartridge(self) -> Self {
+		Self(self.0 | ROML)
+	}
+
+	#[inline(always)]
+	pub fn without_ram(self) -> Self {
+		Self(self.0 & !RAM)
+	}
+
+	#[inline(always)]
 	pub fn ram_selected(self) -> bool {
 		self.0 & RAM != 0
 	}

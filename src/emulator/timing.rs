@@ -2,8 +2,8 @@
 // src/emulator/timing.rs — Emulator Synchronisation & Warp Timers
 // =======================================================
 
-pub use crate::emulator::constants::{PAL_FRAME_DURATION, WARP_PRESENT_INTERVAL};
-use std::time::{Duration, Instant};
+pub use crate::emulator::constants::{HOST_WAKE_MARGIN, PAL_FRAME_DURATION, WARP_PRESENT_INTERVAL};
+use std::time::Instant;
 
 /* TimeKeeper maps wall-clock time onto PAL frame boundaries. It limits catch-up after host stalls, makes warp presentation rate independent from emulation rate, and provides a single resynchronisation point after pauses or disruptive UI operations. */
 pub struct TimeKeeper {
@@ -12,10 +12,11 @@ pub struct TimeKeeper {
 	pub warp_mode: bool,
 	pub warp_1541: bool,
 	frames_ran: usize,
+	anchored: bool,
 }
 
 impl TimeKeeper {
-	/* Construction anchors emulation and presentation deadlines to the same host instant, avoiding an artificial first-frame catch-up. */
+	/* Pacing is anchored on the first execution request, after window and media setup. Construction time must not become an initial catch-up burst. */
 	pub fn new() -> Self {
 		Self {
 			next_frame_time: Instant::now(),
@@ -23,6 +24,7 @@ impl TimeKeeper {
 			warp_mode: false,
 			warp_1541: false,
 			frames_ran: 0,
+			anchored: false,
 		}
 	}
 
@@ -32,6 +34,7 @@ impl TimeKeeper {
 		self.next_frame_time = now;
 		self.last_present = now;
 		self.frames_ran = 0;
+		self.anchored = false;
 	}
 
 	/* Full-machine warp and drive-only warp are mutually exclusive because they suspend pacing under different conditions. */
@@ -55,8 +58,14 @@ impl TimeKeeper {
 		self.warp_mode || (self.warp_1541 && drive_busy)
 	}
 
-	/* Normal mode waits for the next PAL deadline and may run a bounded catch-up burst. Warp modes deliberately abandon accumulated wall-clock debt and run one frame per host service pass. */
+	/* The event loop owns all waiting, including the final polling margin,
+	 * so input remains dispatchable until the PAL deadline. This method only
+	 * accounts for due frames; warp abandons wall-clock debt. */
 	pub fn calculate_frames_to_run(&mut self, drive_busy: bool) -> usize {
+		if !self.anchored {
+			self.next_frame_time = Instant::now();
+			self.anchored = true;
+		}
 		if self.is_warping(drive_busy) {
 			self.next_frame_time = Instant::now();
 			self.frames_ran = 1;
@@ -64,26 +73,15 @@ impl TimeKeeper {
 		} else {
 			let now = Instant::now();
 
-			if now < self.next_frame_time {
-				let remaining = self.next_frame_time - now;
-				if remaining > Duration::from_millis(2) {
-					std::thread::sleep(remaining - Duration::from_millis(2));
-				}
-				while Instant::now() < self.next_frame_time {
-					std::hint::spin_loop();
-				}
-			}
-
-			let now_after_wait = Instant::now();
 			let mut steps = 0;
-			while now_after_wait >= self.next_frame_time {
+			while now >= self.next_frame_time {
 				steps += 1;
 				self.next_frame_time += PAL_FRAME_DURATION;
 			}
 
 			if steps > 3 {
 				steps = 3;
-				self.next_frame_time = now_after_wait + PAL_FRAME_DURATION;
+				self.next_frame_time = now + PAL_FRAME_DURATION;
 			}
 
 			self.frames_ran = steps;

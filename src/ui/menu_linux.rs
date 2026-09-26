@@ -59,7 +59,7 @@ impl PlatformMenu {
 	}
 
 	pub fn pump(&mut self) {
-		let context = glib::MainContext::default();
+		let context = gtk::glib::MainContext::default();
 		while context.pending() {
 			context.iteration(false);
 		}

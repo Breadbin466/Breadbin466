@@ -6,7 +6,7 @@ use super::constants::{G64_HEADER_LEN, G64_MAX_HALF_TRACKS, G64_SIGNATURE};
 use super::disk_drive::{DiskMechanism, PendingG64Layout, PendingWrite, TEMP_FILE_COUNTER};
 use super::media::{DiskFormat, TrackSpeed, sector_offset, total_sectors};
 use super::{d7z, gcr, nib};
-use std::fs::{self, File};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -36,10 +36,13 @@ impl DiskMechanism {
 			counter
 		));
 
+		let Ok(mut file) = OpenOptions::new().write(true).create_new(true).open(&temporary) else {
+			return false;
+		};
 		let write_result = (|| -> std::io::Result<()> {
-			let mut file = File::create(&temporary)?;
 			file.write_all(buffer)?;
 			file.sync_all()?;
+			drop(file);
 			Ok(())
 		})();
 

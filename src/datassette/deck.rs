@@ -1,325 +1,232 @@
 // =======================================================
-// src/datassette/deck.rs — Datassette hardware emulation and tape control
+// src/datassette/deck.rs — Cassette transport and electrical signals
 // =======================================================
 
-use super::constants::{
-	MAX_TAPE_SIZE, PULSE_HOLD_CYCLES, TAP_DATA_SIZE_OFFSET, TAP_EXTENDED_PULSE_SIZE,
-	TAP_HEADER_SIZE, TAP_MAX_EXTENDED_PULSE, TAP_MAX_SHORT_PULSE, TAP_SHORT_PULSE_SCALE,
-	TAP_SIGNATURE, TAP_VERSION_0, TAP_VERSION_1, TAP_VERSION_OFFSET,
+use super::{
+	constants::{MAX_TAPE_PULSES, PULSE_HOLD_CYCLES},
+	image::TapeImage,
+	odometre::Odometre,
 };
-use super::odometre::Odometre;
-use std::fs::File;
-use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/* TapeState distinguishes the interval between flux transitions from the short active-low pulse currently presented to CIA1 FLAG. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TapeState {
-	/* No read pulse is being held; the pulse interval counter may still be running. */
 	Idle,
-	/* A newly decoded transition is being held long enough for the CIA input to sample it. */
 	PulseActive,
 }
 
-/* Datassette combines three distinct concerns: TAP byte-stream position, transport controls and the electrical read/write signals connected through the 6510 and CIA1. Tape motion advances only while PLAY is pressed and the computer energises the motor line. */
+/* A recording replaces transitions only over the tape that actually moved
+ * under the head. New transitions are collected separately, allowing one
+ * splice at the end instead of shifting the untouched tail on every edge. */
+struct Recording {
+	start: u64,
+	edges: Vec<u64>,
+	write_level: bool,
+}
+
+/* The 6510 controls motor power and WRITE; the mechanical PLAY/RECORD
+ * latches control transport. READ presents the falling edges retained by
+ * TAP to CIA1 FLAG. TAP does not contain analogue amplitude or duty cycle,
+ * so the short FLAG hold is independent of distance between transitions. */
 pub struct Datassette {
-	/* Complete TAP image, including the original header and all pulse records. */
-	pub tape_data: Option<Vec<u8>>,
-	/* Byte position of the next pulse record in the TAP stream. */
-	pub cursor: usize,
-	/* Remaining machine cycles before the next recorded flux transition. */
-	pub cycle_counter: u32,
-	/* Mechanical PLAY latch; the motor line still decides whether tape actually moves. */
+	image: Option<TapeImage>,
+	tape_path: Option<PathBuf>,
+	position: u64,
+	cursor: usize,
 	pub play_pressed: bool,
-	/* RECORD latch. Recording remains coupled to PLAY, as on the physical transport. */
 	pub record_pressed: bool,
-	/* Read-signal phase. Idle counts the next interval; PulseActive holds the decoded transition on the CIA input. */
 	pub state: TapeState,
-	/* Number of cycles for which the CIA FLAG pulse remains active. */
-	pub pulse_hold_timer: u8,
-	/* Host path retained only for persistence; transport timing never depends on host I/O. */
-	pub tape_path: Option<PathBuf>,
-	pub total_pulses: u64,
-	/* Number of pulse records crossed since rewind, used for progress reporting rather than timing. */
-	pub current_pulses: u64,
-	/* Total cycles of actual tape motion, used by the mechanical counter model. */
-	pub motor_cycles_accumulated: u64,
+	pulse_hold: u8,
+	recording: Option<Recording>,
+	dirty: bool,
+	flush_requested: bool,
+	recording_error: Option<String>,
 	odometre: Odometre,
-	/* Saturating cycle interval accumulated since the previous rising edge while RECORD waits for the next write-line transition. */
-	pub write_cycle_accumulator: u32,
-	/* Previous sampled cassette-write level, retained so only low-to-high transitions terminate intervals. */
-	pub last_write_bit: bool,
 }
 
 impl Datassette {
-	/* Construction leaves the deck stopped and empty, with the read line idle and no residual write interval. */
 	pub fn new() -> Self {
 		Self {
-			tape_data: None,
+			image: None,
+			tape_path: None,
+			position: 0,
 			cursor: 0,
-			cycle_counter: 0,
 			play_pressed: false,
 			record_pressed: false,
 			state: TapeState::Idle,
-			pulse_hold_timer: 0,
-			tape_path: None,
-			total_pulses: 0,
-			current_pulses: 0,
-			motor_cycles_accumulated: 0,
+			pulse_hold: 0,
+			recording: None,
+			dirty: false,
+			flush_requested: false,
+			recording_error: None,
 			odometre: Odometre::new(),
-			write_cycle_accumulator: 0,
-			last_write_bit: true,
 		}
 	}
 
-	/* Loading first validates the complete pulse stream. State is committed only after every short or extended record has been proven structurally complete, so a malformed image cannot partially replace the mounted tape. */
+	/* Invalid or unsupported input cannot disturb the currently mounted tape. */
 	pub fn load_tap(&mut self, data: Vec<u8>, path: PathBuf) -> bool {
-		if data.len() < TAP_HEADER_SIZE
-			|| data.len() > MAX_TAPE_SIZE
-			|| &data[..TAP_SIGNATURE.len()] != TAP_SIGNATURE
-		{
+		let Some(image) = TapeImage::decode(&data) else {
 			return false;
-		}
-
-		let version = data[TAP_VERSION_OFFSET];
-		if version != TAP_VERSION_0 && version != TAP_VERSION_1 {
-			return false;
-		}
-
-		let mut temp_cursor = TAP_HEADER_SIZE;
-		let mut pulse_count = 0u64;
-		while temp_cursor < data.len() {
-			let val = data[temp_cursor];
-			temp_cursor += 1;
-			if val == 0x00 && version == TAP_VERSION_1 {
-				if temp_cursor + TAP_EXTENDED_PULSE_SIZE > data.len() {
-					return false;
-				}
-				let pulse = u32::from_le_bytes([
-					data[temp_cursor],
-					data[temp_cursor + 1],
-					data[temp_cursor + 2],
-					0,
-				]);
-				if pulse == 0 {
-					return false;
-				}
-				temp_cursor += TAP_EXTENDED_PULSE_SIZE;
-			}
-			pulse_count += 1;
-		}
-
-		self.tape_data = Some(data);
+		};
+		*self = Self::new();
+		self.image = Some(image);
 		self.tape_path = Some(path);
-		self.cursor = TAP_HEADER_SIZE;
-		self.cycle_counter = 0;
-		self.state = TapeState::Idle;
-		self.total_pulses = pulse_count;
-		self.current_pulses = 0;
-		self.motor_cycles_accumulated = 0;
-		self.write_cycle_accumulator = 0;
-		self.last_write_bit = true;
 		true
 	}
 
-	/* Rewind returns both the byte cursor and the mechanical counter to the beginning of recorded data without changing the inserted image or transport buttons. */
-	pub fn rewind(&mut self) {
-		self.cursor = TAP_HEADER_SIZE;
-		self.cycle_counter = 0;
-		self.state = TapeState::Idle;
-		self.current_pulses = 0;
-		self.motor_cycles_accumulated = 0;
-		self.write_cycle_accumulator = 0;
-	}
-
-	/* Ejection commits any recording before releasing the image. A failed host write leaves the cassette mounted so the only in-memory copy is never discarded. */
-	pub fn eject(&mut self) -> std::io::Result<()> {
-		self.save_tape_to_host()?;
-		self.tape_data = None;
-		self.tape_path = None;
-		self.cursor = 0;
-		self.cycle_counter = 0;
-		self.play_pressed = false;
-		self.record_pressed = false;
-		self.state = TapeState::Idle;
-		self.total_pulses = 0;
-		self.current_pulses = 0;
-		self.motor_cycles_accumulated = 0;
-		self.write_cycle_accumulator = 0;
-		self.last_write_bit = true;
-		Ok(())
-	}
-
-	/* Media presence is independent of PLAY, motor power and current cursor position. */
 	pub fn has_tape(&self) -> bool {
-		self.tape_data.is_some()
+		self.image.is_some()
 	}
-
-	/* The mounted path is exposed read-only so UI state cannot retarget persistence behind the deck. */
-	pub fn get_path(&self) -> Option<&std::path::Path> {
+	pub fn get_path(&self) -> Option<&Path> {
 		self.tape_path.as_deref()
 	}
-
-	/* The visible counter follows accumulated motor-on time rather than logical pulse position, matching the transport rather than the file cursor. */
 	pub fn get_odometre_value(&self) -> f64 {
-		if self.tape_data.is_none() {
-			return 0.0;
-		}
-		self.odometre.calculate_value(self.motor_cycles_accumulated)
-	}
-
-	/* Recording is persisted through a temporary file and rename. The backup fallback preserves the previous image on filesystems that cannot replace an existing path atomically. */
-	pub fn save_tape_to_host(&self) -> std::io::Result<()> {
-		let Some(path) = self.tape_path.as_ref() else {
-			return Ok(());
-		};
-		let Some(data) = self.tape_data.as_ref() else {
-			return Ok(());
-		};
-		let mut output = data.clone();
-		let data_size = output.len().saturating_sub(TAP_HEADER_SIZE) as u32;
-		output[TAP_DATA_SIZE_OFFSET..TAP_DATA_SIZE_OFFSET + 4]
-			.copy_from_slice(&data_size.to_le_bytes());
-		let temporary = path.with_extension("tap.tmp");
-		let backup = path.with_extension("tap.bak");
-		let result = (|| -> std::io::Result<()> {
-			let mut file = File::create(&temporary)?;
-			file.write_all(&output)?;
-			file.sync_all()?;
-			if std::fs::rename(&temporary, path).is_ok() {
-				return Ok(());
-			}
-			let had_original = path.exists();
-			if had_original {
-				std::fs::rename(path, &backup)?;
-			}
-			if let Err(error) = std::fs::rename(&temporary, path) {
-				if had_original {
-					let _ = std::fs::rename(&backup, path);
-				}
-				return Err(error);
-			}
-			if had_original {
-				let _ = std::fs::remove_file(&backup);
-			}
-			Ok(())
-		})();
-		if result.is_err() {
-			let _ = std::fs::remove_file(temporary);
-		}
-		result
-	}
-
-	/* Recording measures the interval between rising edges of the 6510 cassette-write signal. Short intervals use the compact one-byte TAP form; longer intervals are emitted as a 24-bit extended pulse. */
-	#[inline]
-	pub fn record_cycle_tick(&mut self, current_write_bit: bool) {
-		self.motor_cycles_accumulated += 1;
-		self.write_cycle_accumulator = self.write_cycle_accumulator.saturating_add(1);
-
-		/* Only the low-to-high transition closes the preceding interval and creates a flux pulse record. */
-		if !self.last_write_bit && current_write_bit {
-			if let Some(ref mut data) = self.tape_data {
-				/* Once the bounded image is full, recording stops growing it but input edge tracking continues so transport state remains coherent. */
-				if data.len() >= MAX_TAPE_SIZE {
-					self.last_write_bit = current_write_bit;
-					return;
-				}
-
-				/* Short pulses use eight-cycle units. Version 1 stores longer intervals as an exact 24-bit cycle count; version 0 can only retain its legacy long-pulse marker. */
-				let short_pulse = self.write_cycle_accumulator / TAP_SHORT_PULSE_SCALE;
-				if short_pulse > 0 {
-					let version = data[TAP_VERSION_OFFSET];
-					if short_pulse <= TAP_MAX_SHORT_PULSE {
-						if data.len() < MAX_TAPE_SIZE {
-							data.push(short_pulse as u8);
-						} else {
-							self.last_write_bit = current_write_bit;
-							return;
-						}
-					} else if version == TAP_VERSION_1 {
-						if data.len() + 1 + TAP_EXTENDED_PULSE_SIZE > MAX_TAPE_SIZE {
-							self.last_write_bit = current_write_bit;
-							return;
-						}
-						let pulse_cycles = self.write_cycle_accumulator.min(TAP_MAX_EXTENDED_PULSE);
-						data.push(0x00);
-						data.push((pulse_cycles & 0xFF) as u8);
-						data.push(((pulse_cycles >> 8) & 0xFF) as u8);
-						data.push(((pulse_cycles >> 16) & 0xFF) as u8);
-					} else {
-						if data.len() < MAX_TAPE_SIZE {
-							data.push(0x00);
-						} else {
-							self.last_write_bit = current_write_bit;
-							return;
-						}
-					}
-					self.total_pulses += 1;
-					self.current_pulses = self.total_pulses;
-				}
-				self.write_cycle_accumulator = 0;
-			}
-		}
-		self.last_write_bit = current_write_bit;
-	}
-
-	/* Playback advances by one C64 machine cycle. A completed interval emits one active-low FLAG pulse, while the hold state keeps that pulse observable for the configured number of cycles. */
-	#[inline]
-	pub fn clock_tick(&mut self, motor_on: bool) -> bool {
-		/* PLAY alone does not move tape: the 6510 motor output must also energise the transport. */
-		if !self.play_pressed || !motor_on {
-			return false;
-		}
-		let Some(ref data) = self.tape_data else {
-			return false;
-		};
-		if self.cursor >= data.len() {
-			return false;
-		}
-
-		self.motor_cycles_accumulated += 1;
-
-		/* PulseActive is a presentation phase, not extra tape travel: the next TAP interval is not fetched until the held FLAG pulse has ended. */
-		if self.state == TapeState::PulseActive {
-			if self.pulse_hold_timer > 0 {
-				self.pulse_hold_timer -= 1;
-				return false;
-			}
-			self.state = TapeState::Idle;
-		}
-		/* The interval counter represents distance to the next transition. Decrementing before fetching prevents adjacent records from collapsing into the same machine cycle. */
-		if self.cycle_counter > 0 {
-			self.cycle_counter -= 1;
-			return false;
-		}
-		/* A non-zero byte stores an interval in units of eight cycles. Version 0 assigns zero the legacy 256-unit interval; version 1 follows zero with an exact 24-bit cycle count. */
-		let raw_val = data[self.cursor];
-		self.cursor += 1;
-		self.current_pulses += 1;
-		/* Extended records are consumed atomically. A truncated tail is treated as end-of-media rather than exposing a partial duration. */
-		if raw_val == 0x00 {
-			if data[TAP_VERSION_OFFSET] == TAP_VERSION_0 {
-				self.cycle_counter = (TAP_MAX_SHORT_PULSE + 1) * TAP_SHORT_PULSE_SCALE;
-			} else if self.cursor + TAP_EXTENDED_PULSE_SIZE <= data.len() {
-				let b1 = data[self.cursor] as u32;
-				let b2 = data[self.cursor + 1] as u32;
-				let b3 = data[self.cursor + 2] as u32;
-				self.cursor += TAP_EXTENDED_PULSE_SIZE;
-				self.cycle_counter = b1 | (b2 << 8) | (b3 << 16);
-			} else {
-				self.cursor = data.len();
-				return false;
-			}
+		if self.has_tape() {
+			self.odometre.calculate_value(self.position)
 		} else {
-			self.cycle_counter = (raw_val as u32) * TAP_SHORT_PULSE_SCALE;
+			0.0
 		}
-		/* Fetching a record schedules the transition immediately, then leaves its encoded interval to time the following transition. */
-		self.state = TapeState::PulseActive;
-		self.pulse_hold_timer = PULSE_HOLD_CYCLES;
-		true
+	}
+
+	/* Host transport navigation changes position without fabricating read
+	 * pulses. Any recording already made is committed before the seek. */
+	pub fn rewind(&mut self) {
+		self.seek(0);
+	}
+	pub fn fast_forward(&mut self) {
+		self.finish_recording();
+		let end = self
+			.image
+			.as_ref()
+			.and_then(|image| image.edges.last())
+			.copied()
+			.unwrap_or(0);
+		self.seek(end);
+	}
+	fn seek(&mut self, position: u64) {
+		self.finish_recording();
+		self.position = position;
+		self.cursor = self.image.as_ref().map_or(0, |image| {
+			image.edges.partition_point(|&edge| edge <= position)
+		});
+		self.release_read();
+	}
+	fn release_read(&mut self) {
+		self.state = TapeState::Idle;
+		self.pulse_hold = 0;
+	}
+
+	/* One call represents one PHI2 cycle, in either normal or warp mode.
+	 * Stopping the motor freezes tape position but releases the read pulse;
+	 * restarting resumes the remaining interval rather than refetching it. */
+	#[inline]
+	pub fn tick(&mut self, motor_on: bool, write_level: bool) -> bool {
+		if !self.has_tape() || !self.play_pressed || !motor_on {
+			self.finish_recording();
+			self.release_read();
+			return true;
+		}
+		if self.record_pressed {
+			if self.recording.is_none() {
+				self.recording = Some(Recording {
+					start: self.position,
+					edges: Vec::new(),
+					write_level,
+				});
+			}
+			self.position += 1;
+			let recording = self.recording.as_mut().unwrap();
+			/* The 1530 read/write path inverts polarity: rising WRITE edges
+			 * become falling READ edges (DATASETTE-SERVICE-1984). Sampling
+			 * the initial level avoids inventing a motor-start edge. */
+			if !recording.write_level && write_level {
+				if recording.edges.len() >= MAX_TAPE_PULSES {
+					self.recording_error = Some("Cassette recording reached the supported size; transport stopped without discarding recorded data".into());
+					self.record_pressed = false;
+					self.play_pressed = false;
+					self.finish_recording();
+				} else {
+					recording.edges.push(self.position);
+				}
+			}
+			if let Some(recording) = self.recording.as_mut() {
+				recording.write_level = write_level;
+			}
+			self.release_read();
+			return true;
+		}
+		self.finish_recording();
+		self.position += 1;
+		if self.pulse_hold > 0 {
+			self.pulse_hold -= 1;
+		}
+		let image = self.image.as_ref().unwrap();
+		if image
+			.edges
+			.get(self.cursor)
+			.is_some_and(|&edge| edge <= self.position)
+		{
+			self.cursor += 1;
+			self.pulse_hold = PULSE_HOLD_CYCLES;
+		}
+		self.state = if self.pulse_hold == 0 {
+			TapeState::Idle
+		} else {
+			TapeState::PulseActive
+		};
+		self.state == TapeState::Idle
+	}
+
+	fn finish_recording(&mut self) {
+		let Some(recording) = self.recording.take() else {
+			return;
+		};
+		if self.position == recording.start {
+			return;
+		}
+		if let Some(image) = self.image.as_mut() {
+			let first = image.edges.partition_point(|&edge| edge <= recording.start);
+			let end = image.edges.partition_point(|&edge| edge <= self.position);
+			image.edges.splice(first..end, recording.edges);
+			self.cursor = image.edges.partition_point(|&edge| edge <= self.position);
+			self.dirty = true;
+			self.flush_requested = true;
+		}
+	}
+
+	pub fn take_recording_error(&mut self) -> Option<String> {
+		self.recording_error.take()
+	}
+
+	/* Persistence is requested at transport or motor boundaries, never once
+	 * per emulated frame. Unmodified tapes are not rewritten on ejection. */
+	pub fn flush_if_requested(&mut self) -> std::io::Result<()> {
+		if !self.flush_requested {
+			return Ok(());
+		}
+		self.flush_requested = false;
+		self.save_tape_to_host()
+	}
+	pub fn save_tape_to_host(&mut self) -> std::io::Result<()> {
+		self.finish_recording();
+		if !self.dirty {
+			return Ok(());
+		}
+		let (Some(image), Some(path)) = (&self.image, &self.tape_path) else {
+			return Ok(());
+		};
+		let data = image.encode()?;
+		super::persistence::write(path, &data)?;
+		self.dirty = false;
+		self.flush_requested = false;
+		Ok(())
+	}
+	pub fn eject(&mut self) -> std::io::Result<()> {
+		self.save_tape_to_host()?;
+		*self = Self::new();
+		Ok(())
 	}
 }
-
 impl Default for Datassette {
 	fn default() -> Self {
 		Self::new()

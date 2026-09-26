@@ -92,6 +92,7 @@ pub(super) struct IecCable {
 	pub(super) drive_cycle: PaddedU64,
 	pub(super) device_events: EventRing,
 	pub(super) stopping: AtomicBool,
+	pub(super) waiting: AtomicBool,
 }
 
 impl IecCable {
@@ -101,6 +102,7 @@ impl IecCable {
 			drive_cycle: PaddedU64(AtomicU64::new(0)),
 			device_events: EventRing::new(),
 			stopping: AtomicBool::new(false),
+			waiting: AtomicBool::new(false),
 		}
 	}
 }

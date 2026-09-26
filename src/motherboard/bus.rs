@@ -129,6 +129,8 @@ pub struct Motherboard {
 	last_drive_device_state: u32,
 	drive_mode: DriveMode,
 	audio_rate_converter: AudioRateConverter,
+	audio_output_enabled: bool,
+	sid_clocking_enabled: bool,
 	pub audio_buffer_storage: Vec<f32>,
 	/* Consumed after each motherboard cycle by the optional debugger. */
 	debug_last_cpu_access: Option<DebugBusAccess>,
@@ -170,6 +172,8 @@ impl Motherboard {
 				CLOCK_FREQUENCY_HZ,
 				f64::from(audio_sample_rate.round().clamp(8_000.0, 192_000.0) as u32),
 			),
+			audio_output_enabled: true,
+			sid_clocking_enabled: true,
 			audio_buffer_storage: Vec::with_capacity(
 				((audio_sample_rate.max(8_000.0) as usize + 49) / 50) + 64,
 			),
@@ -417,6 +421,11 @@ impl Motherboard {
 			return Err("PRG exceeds the 64 KiB address space".into());
 		}
 		let end_addr = end_exclusive as u16;
+		/* Host PRGs use the virtual disk-load convention. Set FA before
+		 * copying, as SETLFS does before LOAD, so a payload covering zero
+		 * page can still replace it. Subsequent loaders use FA ($BA) to
+		 * address the same serial device. */
+		self.memory.ram.write(0xBA, 8);
 		let mut offset = 0usize;
 		while offset < content.len() {
 			self.memory
@@ -440,15 +449,19 @@ impl Motherboard {
 		Ok(())
 	}
 
+	/* Normal-speed muting discards host samples only, preserving the SID
+	 * and converter history. Silent warp controls clocking separately. */
 	pub fn set_audio_rendering(&mut self, enabled: bool) {
-		if enabled && !self.memory.sid.rendering_enabled {
-			self.audio_rate_converter.reset();
-		}
-		self.memory.sid.rendering_enabled = enabled;
+		self.audio_output_enabled = enabled;
 	}
 
+	/* Silent warp deliberately suspends SID work. On returning to clocked
+	 * audio, discard converter history from before that accelerated interval. */
 	pub fn set_sid_clocking(&mut self, enabled: bool) {
-		self.memory.sid.clocking_enabled = enabled;
+		if enabled && !self.sid_clocking_enabled {
+			self.audio_rate_converter.reset();
+		}
+		self.sid_clocking_enabled = enabled;
 	}
 
 	pub fn set_video_composition(&mut self, enabled: bool) {
@@ -461,6 +474,7 @@ impl Motherboard {
 
 	/* This is the frame-level service entry point. It clears the previous audio batch, advances exactly one PAL frame through tick_cycle(), then snapshots drive and video telemetry after every device has reached the same frame boundary. */
 	pub fn tick_frame(&mut self) {
+		self.vic.telemetry.begin_frame();
 		self.audio_buffer_storage.clear();
 		for _ in 0..CYCLES_PER_FRAME {
 			self.tick_cycle();
@@ -478,15 +492,14 @@ impl Motherboard {
 
 	#[inline(always)]
 	fn render_sid_cycle(&mut self) {
-		if !self.memory.sid.clocking_enabled {
+		if !self.sid_clocking_enabled {
 			return;
 		}
-		let Some(raw_sample) = self.memory.tick_sid() else {
-			return;
-		};
-
+		let raw_sample = self.memory.tick_sid();
 		if let Some(sample) = self.audio_rate_converter.accept_cycle_sample(raw_sample) {
-			self.audio_buffer_storage.push(soft_clip_audio(sample));
+			if self.audio_output_enabled {
+				self.audio_buffer_storage.push(soft_clip_audio(sample));
+			}
 		}
 	}
 

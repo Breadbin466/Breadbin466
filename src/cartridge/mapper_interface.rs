@@ -63,6 +63,7 @@ pub enum MapperType {
 	RetroReplay,
 	RGCD,
 	GMod2,
+	Pagefox,
 }
 
 impl MapperType {
@@ -92,6 +93,7 @@ impl MapperType {
 			33 => Some(Self::EasyFlashXbank),
 			36 => Some(Self::RetroReplay),
 			57 => Some(Self::RGCD),
+			53 => Some(Self::Pagefox),
 			60 => Some(Self::GMod2),
 			_ => None,
 		}
@@ -125,6 +127,7 @@ impl MapperType {
 			Self::RetroReplay => 36,
 			Self::RGCD => 57,
 			Self::GMod2 => 60,
+			Self::Pagefox => 53,
 		}
 	}
 
@@ -156,6 +159,7 @@ impl MapperType {
 			Self::RetroReplay => "Retro Replay",
 			Self::RGCD => "RGCD",
 			Self::GMod2 => "GMod2",
+			Self::Pagefox => "Pagefox",
 		}
 	}
 }
@@ -188,6 +192,17 @@ pub trait CartridgeMapper {
 	/* Image revisions select physical cartridge variants before CHIP packets
 	 * are loaded. Most cartridge families have only their original revision. */
 	fn set_hardware_revision(&mut self, _revision: u8) {}
+	/* Some freezer RAM overlays inhibit motherboard DRAM writes while
+	 * their cartridge window is selected. The range is inclusive. */
+	fn exclusive_ram_window(&self) -> Option<(u16, u16)> {
+		None
+	}
+	/* Address-decoded RAM writes can remain active independently of GAME,
+	 * EXROM and the CPU port. The range is inclusive. */
+	fn independent_write_window(&self) -> Option<(u16, u16)> {
+		None
+	}
+	fn contended_ram_window(&self) -> Option<(u16, u16)> { None }
 	fn reset(&mut self);
 	fn read_roml(&mut self, offset: u16, cycle: u64) -> Option<u8>;
 	fn read_romh(&mut self, offset: u16, cycle: u64) -> Option<u8>;

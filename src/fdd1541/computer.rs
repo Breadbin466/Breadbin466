@@ -64,7 +64,7 @@ impl DriveBus {
 
 	/* The 1541 ROM window is exactly 16 KiB even though it is mirrored across the upper address space by board decoding. */
 	pub fn load_custom_dos_rom(&mut self, path: &Path) -> crate::emulator::Result<()> {
-		let data = std::fs::read(path)?;
+		let data = crate::host_files::read(path, DOS_ROM_SIZE)?;
 		if data.len() != DOS_ROM_SIZE {
 			return Err(format!("1541 ROM must be exactly {} bytes", DOS_ROM_SIZE).into());
 		}

@@ -14,11 +14,12 @@ pub(crate) const TAP_SHORT_PULSE_SCALE: u32 = 8;
 pub(crate) const TAP_MAX_SHORT_PULSE: u32 = u8::MAX as u32;
 pub(crate) const TAP_MAX_EXTENDED_PULSE: u32 = 0x00FF_FFFF;
 /* The size limit bounds malformed or continuously recorded images before they can exhaust host memory. */
-pub(crate) const MAX_TAPE_SIZE: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_TAPE_SIZE: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_TAPE_PULSES: usize = (MAX_TAPE_SIZE - TAP_HEADER_SIZE) / 4;
 /* A detected flux transition is held low for two machine cycles so CIA1 FLAG observes a stable edge rather than a zero-duration host event. */
 pub(crate) const PULSE_HOLD_CYCLES: u8 = 2;
 /* Counter motion is derived from elapsed PAL machine cycles, tape speed, reel geometry and tape thickness rather than from host frame time. */
-pub(crate) const C64_PAL_CYCLES_PER_SECOND: f64 = 985_248.0;
+pub(crate) const C64_PAL_CYCLES_PER_SECOND: f64 = crate::clockchip::constants::CPU_FREQ_HZ;
 pub(crate) const ODOMETRE_INITIAL_REEL_RADIUS_METRES: f64 = 0.011;
 pub(crate) const ODOMETRE_TAPE_SPEED_METRES_PER_SECOND: f64 = 0.04762;
 pub(crate) const ODOMETRE_TAPE_THICKNESS_METRES: f64 = 12.0e-6;

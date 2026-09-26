@@ -54,6 +54,9 @@ impl Breadbin {
 impl ApplicationHandler for Breadbin {
 	/* resumed is the single construction gate for Orchestrator. Repeated resume notifications reuse the existing machine instead of rebuilding mutable emulator state. */
 	fn resumed(&mut self, application: &ActiveEventLoop) {
+		#[cfg(any(target_os = "windows", target_os = "linux"))]
+		{ self.modifiers = ModifiersState::default(); }
+		if let Some(o) = self.orchestrator.as_mut() { o.resynchronise_host(); }
 		if self.orchestrator.is_none() {
 			match Orchestrator::new(application, &self.command_line) {
 				Ok(driver) => self.orchestrator = Some(driver),
@@ -64,7 +67,13 @@ impl ApplicationHandler for Breadbin {
 		}
 	}
 
-	/* Native window events are routed by window ownership before they reach emulator input. Inspector events are consumed locally, while main-window events may mutate input state, media state or presentation state. */
+	fn suspended(&mut self, _: &ActiveEventLoop) {
+		#[cfg(any(target_os = "windows", target_os = "linux"))]
+		{ self.modifiers = ModifiersState::default(); }
+		if let Some(o) = self.orchestrator.as_mut() { o.resynchronise_host(); }
+	}
+
+	/* Native window events are routed by window ownership before they reach emulator input. Native Inspector controls own their events; only main-window events may mutate input state, media state or presentation state. */
 	fn window_event(
 		&mut self,
 		application: &ActiveEventLoop,
@@ -80,35 +89,31 @@ impl ApplicationHandler for Breadbin {
 			o.is_dark_mode = *theme == winit::window::Theme::Dark;
 		}
 
-		if o.is_inspector_window(window_id) {
-			match event {
-				WindowEvent::CloseRequested => {
-					o.close_inspector();
-				}
-				WindowEvent::RedrawRequested => {
-					o.redraw_inspector();
-				}
-				WindowEvent::Resized(size) => {
-					if let Some(inspector) = o.inspector.as_mut() {
-						inspector.handle_resize(size.width, size.height);
-					}
-				}
-				_ => {}
-			}
-			return;
-		}
+		if window_id != o.context.window.id() { return; }
 
 		match event {
+			WindowEvent::Focused(false) => {
+				o.handle_focus_lost();
+				#[cfg(any(target_os = "windows", target_os = "linux"))]
+				{ self.modifiers = ModifiersState::default(); }
+			}
 			WindowEvent::CloseRequested => {
 				if o.context.prepare_shutdown() {
 					application.exit();
 				}
 			}
-			WindowEvent::RedrawRequested => {
-				if let Err(_) = o.draw_frame() {
-					application.exit();
+			WindowEvent::Occluded(hidden) => {
+				if !hidden {
+					o.context.window.request_redraw();
 				}
 			}
+			WindowEvent::RedrawRequested => {
+				if o.draw_frame().is_err() {
+					application.exit();
+					return;
+				}
+			}
+
 			/* Resize events are normalised by Orchestrator before renderer reconfiguration,
 			 * so every platform receives the same locked presentation ratio. */
 			WindowEvent::Resized(size) => {
@@ -204,6 +209,12 @@ impl ApplicationHandler for Breadbin {
 		}
 
 		#[cfg(target_os = "linux")]
+		if Shell::take_focus_lost() {
+			self.modifiers = ModifiersState::default();
+			if let Some(o) = self.orchestrator.as_mut() { o.handle_focus_lost(); }
+		}
+
+		#[cfg(target_os = "linux")]
 		while let Some((key, state)) = Shell::poll_key_event() {
 			if let Some(o) = self.orchestrator.as_mut() {
 				o.handle_input_event(key, state);
@@ -218,7 +229,10 @@ impl ApplicationHandler for Breadbin {
 
 		if let Some(o) = self.orchestrator.as_mut() {
 			o.context.menu.pump();
-			o.update();
+			if o.update().is_err() {
+				application.exit();
+				return;
+			}
 
 			if o.quit_time_reached() {
 				if o.context.prepare_shutdown() {
@@ -247,9 +261,24 @@ impl ApplicationHandler for Breadbin {
 			.map(|o| o.paused)
 			.unwrap_or(false);
 		application.set_control_flow(if paused {
-			ControlFlow::Wait
+			self.orchestrator.as_ref().and_then(|o| o.inspector.as_ref())
+				.and_then(|inspector| inspector.next_refresh_time())
+				.map(ControlFlow::WaitUntil).unwrap_or_else(|| ControlFlow::WaitUntil(std::time::Instant::now() + std::time::Duration::from_secs(1)))
+		} else if let Some(o) = self.orchestrator.as_ref() {
+			if o.is_warping() {
+				ControlFlow::Poll
+			} else {
+				/* Poll through the short wake margin instead of blocking inside
+				 * emulation, so newly arrived keys reach the imminent PAL frame. */
+				let wake = o.get_next_frame_time() - super::timing::HOST_WAKE_MARGIN;
+				if std::time::Instant::now() >= wake {
+					ControlFlow::Poll
+				} else {
+					ControlFlow::WaitUntil(wake)
+				}
+			}
 		} else {
-			ControlFlow::Poll
+			ControlFlow::Wait
 		});
 	}
 }

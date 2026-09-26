@@ -112,6 +112,29 @@ impl Memory {
 		self.read_map_port = pla_port;
 		self.read_map = build_read_page_map(pla_port, game, exrom);
 		self.write_map = build_write_selection_map(pla_port, game, exrom);
+		/* Nordic freezer RAM takes exclusive ownership of its overlay;
+		 * writes must not leak into the motherboard RAM underneath. */
+		if let Some((start, end)) = self.cartridge.configuration.exclusive_ram_window {
+			for page in (start >> 8)..=(end >> 8) {
+				let selection = &mut self.write_map[page as usize];
+				if selection.cartridge_selected() {
+					*selection = selection.without_ram();
+				}
+			}
+		}
+		if let Some((start, end)) = self.cartridge.configuration.independent_write_window {
+			for page in (start >> 8)..=(end >> 8) {
+				let selection = &mut self.write_map[page as usize];
+				*selection = selection.with_cartridge();
+			}
+		}
+		if let Some((start, end)) = self.cartridge.configuration.contended_ram_window {
+			for page in (start >> 8)..=(end >> 8) {
+				if self.read_map[page as usize] == MapRegion::Ram {
+					self.read_map[page as usize] = MapRegion::ContendedCartridgeRam;
+				}
+			}
+		}
 		self.map_dirty = false;
 	}
 
@@ -170,7 +193,7 @@ impl Memory {
 	}
 
 	#[inline(always)]
-	pub fn tick_sid(&mut self) -> Option<i32> {
+	pub fn tick_sid(&mut self) -> i32 {
 		self.sid.tick()
 	}
 
@@ -218,12 +241,20 @@ impl Memory {
 		 * evaluate the same PLA with the live BA pin before issuing a read.
 		 * (C64-PLA-DISSECTED-2012, section 2.7) */
 		let region = if !ba_high {
-			map_cpu_read_addr_with_ba(addr, cpu_port_pins, self.cartridge.game, self.cartridge.exrom, false)
+			let decoded = map_cpu_read_addr_with_ba(addr, cpu_port_pins, self.cartridge.game, self.cartridge.exrom, false);
+			if decoded == MapRegion::Ram && self.read_map[(addr >> 8) as usize] == MapRegion::ContendedCartridgeRam {
+				MapRegion::ContendedCartridgeRam
+			} else { decoded }
 		} else {
 			self.read_map[(addr >> 8) as usize]
 		};
 		let value = match region {
 			MapRegion::Ram => self.ram.read(addr),
+			MapRegion::ContendedCartridgeRam => {
+				let value = self.ram.read(addr) | self.cartridge.read_roml(addr & 0x1FFF, cycle).unwrap_or(0);
+				self.capture_cartridge_map_change();
+				value
+			},
 			MapRegion::Basic => self.rom.read_basic(addr - BASIC_ROM_START),
 			MapRegion::Kernal => self.rom.read_kernal(addr - KERNAL_ROM_START),
 			MapRegion::Char => self.rom.read_char((addr - CHAR_ROM_START) & 0x0FFF),
@@ -387,7 +418,24 @@ impl Memory {
 	/* VIC-II reads use its 14-bit address plus the CIA2-selected bank and do not share the CPU overlay map. The resulting byte still drives the common data bus. */
 	#[inline(always)]
 	pub fn vic_read(&mut self, va: u16, bank: u8, cycle: u64) -> u8 {
-		let value = VICMemoryController::read(
+		let value = VICMemoryController::read::<false>(
+			va,
+			bank,
+			cycle,
+			&self.ram,
+			&self.rom,
+			&mut self.cartridge,
+			self.bus_state.get_floating(cycle),
+		);
+		self.bus_state.update(value, cycle);
+		value
+	}
+
+	/* Matrix reads and two of each sprite’s three data slots occupy PHI2,
+	 * where cartridges may expose a different mapping from PHI1. */
+	#[inline(always)]
+	pub fn vic_read_phi2(&mut self, va: u16, bank: u8, cycle: u64) -> u8 {
+		let value = VICMemoryController::read::<true>(
 			va,
 			bank,
 			cycle,
@@ -414,6 +462,7 @@ impl Memory {
 	pub fn debug_peek(&self, addr: u16, cycle: u64, _vic: &VicII) -> u8 {
 		match self.debug_region(addr) {
 			MapRegion::Ram => self.ram.read(addr),
+			MapRegion::ContendedCartridgeRam => self.ram.read(addr) | self.cartridge.debug_peek_roml(addr & 0x1FFF, cycle).unwrap_or(0),
 			MapRegion::Basic => self.rom.read_basic(addr - BASIC_ROM_START),
 			MapRegion::Kernal => self.rom.read_kernal(addr - KERNAL_ROM_START),
 			MapRegion::Char => self.rom.read_char((addr - CHAR_ROM_START) & 0x0FFF),
@@ -454,6 +503,9 @@ impl Memory {
 	}
 
 	pub fn reset(&mut self, hard_reset: bool) {
+		/* Reset releases the software-selected fast clock without changing
+		 * the optional processor model selected by the host. */
+		self.c128_8502_control = 0;
 		self.bus_state.reset();
 		if let Err(error) = self.cartridge.save_associated_nvram() {
 			eprintln!("[CARTRIDGE] Failed to persist cartridge NVRAM before reset: {error}");

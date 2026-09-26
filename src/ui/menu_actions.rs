@@ -155,7 +155,7 @@ impl MenuHandler {
 		}
 
 		let previous_destination = if path.exists() {
-			match std::fs::read(&path) {
+			match crate::host_files::read(&path, disk_image::MAX_IMAGE_SIZE) {
 				Ok(bytes) => Some(bytes),
 				Err(_) => {
 					if let Some(previous) = previous {
@@ -259,7 +259,7 @@ impl MenuHandler {
 			);
 			return;
 		}
-		let Ok(source_bytes) = std::fs::read(&source) else {
+		let Ok(source_bytes) = crate::host_files::read(&source, disk_image::MAX_IMAGE_SIZE) else {
 			if source_was_mounted {
 				let _ = context.mount_disk(source);
 			}
@@ -312,7 +312,7 @@ impl MenuHandler {
 		 * existing destination must not be lost merely because the newly converted image
 		 * later fails validation during mount. */
 		let previous_destination = if destination.exists() {
-			match std::fs::read(&destination) {
+			match crate::host_files::read(&destination, disk_image::MAX_IMAGE_SIZE) {
 				Ok(bytes) => Some(bytes),
 				Err(_) => {
 					if source_was_mounted {
@@ -438,7 +438,7 @@ impl MenuHandler {
 				}
 
 				let previous_destination = if path.exists() {
-					match std::fs::read(&path) {
+					match crate::host_files::read(&path, crate::datassette::constants::MAX_TAPE_SIZE) {
 						Ok(bytes) => Some(bytes),
 						Err(_) => {
 							if let Some(previous) = previous {
@@ -580,6 +580,7 @@ impl MenuHandler {
 		} else if id == ids.debug_mute_warp {
 		} else if id == ids.debug_mute_global {
 			context.history.mute_enabled = !context.history.mute_enabled;
+			if let Some(audio) = context.audio.as_mut() { audio.discard_pending(); }
 			context.history.save_forced();
 			context
 				.menu

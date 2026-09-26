@@ -76,7 +76,7 @@ impl VicII {
 		/* When the VIC owns the bus, screen RAM supplies the low byte and the separate four-bit colour RAM supplies the upper nibble. Before AEC falls, the low byte is undriven while U16 connects CPU D0-D3 to the VIC colour inputs. The motherboard completes that capture after the CPU bus phase. (BAUER-VIC-II-1996, section 3.14.6) */
 		let value = if self.aec_counter < 0 {
 			let offset = self.vc & VIDEO_COUNTER_MASK;
-			let matrix_byte = vic_read(memory, vm_base.wrapping_add(offset), bank, master_cycle);
+			let matrix_byte = memory.vic_read_phi2(vm_base.wrapping_add(offset), bank, master_cycle);
 			let colour = read_color_ram(memory, 0xD800u16.wrapping_add(offset)) & 0x0F;
 			((colour as u16) << 8) | matrix_byte as u16
 		} else {

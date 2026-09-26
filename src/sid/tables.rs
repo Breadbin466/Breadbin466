@@ -30,9 +30,7 @@ pub(super) struct TransferCurves {
 
 #[derive(Clone, Copy)]
 pub(super) struct FilterCoefficients {
-	pub(super) a1: [[f32; FILTER_OPERATING_BINS]; 16],
-	pub(super) a2: [[f32; FILTER_OPERATING_BINS]; 16],
-	pub(super) a3: [[f32; FILTER_OPERATING_BINS]; 16],
+	pub(super) integrator_gain: [[f32; FILTER_OPERATING_BINS]; 16],
 	pub(super) damping: [f32; 16],
 	pub(super) input_drive: [f32; FILTER_OPERATING_BINS],
 	pub(super) feedback_drive: [f32; FILTER_OPERATING_BINS],
@@ -245,9 +243,7 @@ pub(super) fn build_filter_coefficients() -> Box<[FilterCoefficients; 2048]> {
 				* inverse_resonance.powf(SID_RESONANCE_DAMPING_CURVE)
 	});
 	let empty = FilterCoefficients {
-		a1: [[0.0; FILTER_OPERATING_BINS]; 16],
-		a2: [[0.0; FILTER_OPERATING_BINS]; 16],
-		a3: [[0.0; FILTER_OPERATING_BINS]; 16],
+		integrator_gain: [[0.0; FILTER_OPERATING_BINS]; 16],
 		damping,
 		input_drive: [0.0; FILTER_OPERATING_BINS],
 		feedback_drive: [0.0; FILTER_OPERATING_BINS],
@@ -280,11 +276,7 @@ pub(super) fn build_filter_coefficients() -> Box<[FilterCoefficients; 2048]> {
 				let g = (std::f32::consts::PI * resonance_frequency / sample_rate)
 					.tan()
 					.min(0.94);
-				let k = damping[resonance];
-				let a1 = 1.0 / (1.0 + g * (g + k));
-				entry.a1[resonance][bin] = a1;
-				entry.a2[resonance][bin] = g * a1;
-				entry.a3[resonance][bin] = g * g * a1;
+				entry.integrator_gain[resonance][bin] = g;
 			}
 			entry.input_drive[bin] = 0.72 + 0.88 * operating;
 			entry.feedback_drive[bin] = 0.48 + 1.62 * operating;

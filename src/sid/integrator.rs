@@ -34,30 +34,8 @@ impl IntegratorState {
 	}
 
 	#[inline(always)]
-	/* Intermediate substeps advance only the persistent integrator state. High-pass is reconstructed only on the final substep because earlier values are overwritten before they can affect SID state or output. */
-	pub(super) fn advance_state(
-		&mut self,
-		driven_input: f32,
-		damping: f32,
-		feedback_drive: f32,
-		a1: f32,
-		a2: f32,
-		a3: f32,
-	) {
-		let previous_band = self.band_state;
-		let previous_low = self.low_state;
-		let nonlinear_band = Self::saturate(previous_band, feedback_drive);
-		let effective_input = driven_input - damping * (nonlinear_band - previous_band);
-		let residual = effective_input - previous_low;
-		let band = a1 * previous_band + a2 * residual;
-		let low = previous_low + a2 * previous_band + a3 * residual;
-		self.band_state = 2.0 * band - previous_band;
-		self.low_state = 2.0 * low - previous_low;
-	}
-
-	#[inline(always)]
-	/* The final substep advances the same persistent state and additionally reconstructs the three observable filter outputs. */
-	pub(super) fn advance_output(
+	/* Each substep advances the two capacitor states. Only the final outputs are consumed; inlining eliminates unused output reconstruction in earlier substeps. */
+	pub(super) fn advance(
 		&mut self,
 		driven_input: f32,
 		damping: f32,

@@ -2,6 +2,8 @@
 
 **A Commodore 64 emulator obsessed with getting the hardware right.**
 
+**Breadbin466 now has an official home: [breadbin466.com](https://breadbin466.com).** Explore the emulator, find downloads and send feedback directly to [contact@breadbin466.com](mailto:contact@breadbin466.com).
+
 Breadbin466 is a from-scratch Commodore 64 emulator written in Rust, built around a deliberately narrow idea: **emulate one Commodore 64, and understand that machine well enough to model it rather than approximate it.**
 
 It focuses on a PAL Assy 250466 with a cycle-accurate MOS 6510 and 6569R5 VIC-II, and a 6581R4AR SID extensively characterised against a physical datecode 2286 chip. A cycle-driven Commodore 1541 is provided alongside it, including its own CPU, VIAs, mechanics, GCR read channel and IEC communication.
@@ -13,7 +15,9 @@ The goal is hardware fidelity rather than title-specific compatibility hacks. Br
 </p>
 
 <p align="center">
-  <a href="https://github.com/Breadbin466/Breadbin466/releases/latest"><strong>Download the latest release</strong></a>
+  <a href="https://breadbin466.com"><strong>Official website</strong></a> ·
+  <a href="https://github.com/Breadbin466/Breadbin466/releases/latest"><strong>Downloads</strong></a> ·
+  <a href="mailto:contact@breadbin466.com"><strong>Contact</strong></a>
 </p>
 
 <p align="center">
@@ -58,7 +62,7 @@ When software exposes behaviour that disagrees with the reference hardware, the 
 
 - IEC serial bus;
 - cycle-driven Commodore 1541, including software fastloaders and protected disk behaviour;
-- Commodore 1530 Datassette;
+- Commodore 1530 Datassette with TAP playback and recording;
 - cartridge support, including EasyFlash and freezer cartridges;
 - Commodore 1764 REU with 512 KB.
 
@@ -75,7 +79,9 @@ When software exposes behaviour that disagrees with the reference hardware, the 
 
 ### Desktop integration
 
-- native desktop integration on macOS, Windows and Linux.
+- native menus and Inspector windows on macOS, Windows and Linux;
+- display pacing for fixed-refresh monitors, with sharp pixels;
+- 44.1 kHz audio preferred, with automatic fallback for other output devices.
 
 ## Reference hardware
 
@@ -94,19 +100,44 @@ The Commodore 1541 disk drive, Commodore 1530 Datassette and Commodore 1764 REU 
 
 ## Project status
 
-Breadbin466 is under active development.
+**0.99.0 — Your Turn: feature-complete, ready for community testing.**
+
+Visit [breadbin466.com](https://breadbin466.com), the official home of Breadbin466, for an introduction to the emulator, downloads and a direct way to get in touch. macOS and Windows builds are available through the release downloads; Linux is supported through source builds.
+
+Community testing is the remaining step before Breadbin466 can be called 1.0. It needs broader testing on users' own computers and software collections. Try a favourite game, a demanding demo, a protected disk or a tape recording session. Reports of successful use are welcome too: include your operating system, processor architecture and Breadbin466 version.
+
+Send feedback to [contact@breadbin466.com](mailto:contact@breadbin466.com), or report reproducible problems through [GitHub Issues](https://github.com/Breadbin466/Breadbin466/issues). You do not need a GitHub account to send feedback by email.
 
 A wide range of games, demos, fastloaders, copy-protected disk images, cartridges and REU software already run. The emulator is nevertheless still treated as an engineering work in progress: when software exposes behaviour that disagrees with the reference hardware, the preferred solution is to understand the underlying machine behaviour rather than add a title-specific workaround.
 
 Bug reports are most useful when they include:
 
-- the exact software version or image used;
+- the Breadbin466 version, operating system and processor architecture;
+- the exact game, demo or disk/tape/cartridge image used;
 - the steps required to reproduce the issue;
 - the expected behaviour on real hardware, when known;
 - relevant screenshots, debugger output or traces;
 - whether the issue also occurs without optional hardware such as a cartridge or REU.
 
 ## Changelog
+
+### 0.99.0 — Your Turn
+
+Changes since 0.12.1.
+
+- Introduced the official website, [breadbin466.com](https://breadbin466.com), and a direct feedback address, [contact@breadbin466.com](mailto:contact@breadbin466.com).
+
+- Expanded Datassette support with TAP recording, reliable recording persistence and improved playback across motor stops and restarts, including warp operation.
+- Replaced the Inspector with native windows on macOS, Windows and Linux, with more complete hardware information.
+- Reworked display pacing for fixed-refresh monitors, retaining sharp pixels and the PAL machine's own timing.
+- Reduced audio buffering and presentation overhead; improved audio-device recovery and fallback handling while continuing to prefer 44.1 kHz output.
+- Optimised the SID signal path, audio conversion and other execution paths; normal-speed muting now preserves SID analogue state and audio-converter continuity. Silent warp retains its accelerated behaviour.
+- Corrected SID envelope and output behaviour that could produce an unintended low-level continuous sound.
+- Refined the fixed palette through human observation of a real 6569R5 Assy 250466 on a Commodore monitor, retaining the established blue pair.
+- Refined Datassette transport symbols and their active-state colours in the OSD.
+- Added Pagefox cartridge support and improved EasyFlash programming and cartridge memory mapping, including Replay-family behaviour.
+- Improved 1541 worker synchronisation and VIC-II sprite/bus timing.
+- Hardened file handling and persistence; updated dependencies and removed unnecessary ones.
 
 ### 0.12.1
 

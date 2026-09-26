@@ -59,6 +59,10 @@ impl AtomicPowerMapper {
 }
 
 impl CartridgeMapper for AtomicPowerMapper {
+	fn exclusive_ram_window(&self) -> Option<(u16, u16)> {
+		self.export_ram_at_a000.then_some((0xA000, 0xBFFF))
+	}
+
 	fn reset(&mut self) {
 		self.control = 0;
 		self.bank = 0;

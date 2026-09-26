@@ -1,20 +1,27 @@
+# Technical bibliography
+# Grouped by subsystem, then by reference type. Entries within each
+# subsection are ordered by stable identifier. Add new references to the
+# matching subsection; retain the flat [[source]] schema and existing IDs.
+#
+# Contents
+# 1. C64 system and memory mapping
+# 2. CPU — MOS 6502 and 6510
+# 3. CIA — MOS 6526
+# 4. VIC-II — MOS 6569
+# 5. SID — MOS 6581
+# 6. Disk drive — Commodore 1541 and MOS 6522 VIA
+# 7. Cassette — Commodore 1530
+# 8. RAM expansion — REU and CSG 8726
+# 9. Cartridges
+
 version = 1
 
-[[source]]
-id = "CIA-TOD-MEASUREMENTS"
-title = "MOS 6526 TOD hardware observations and diagnostic protocols"
-author = "VICE test-suite contributors"
-publisher = "VICE test programmes"
-url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CIA/tod/readme.txt"
+# ========================================================================
+# 1. C64 system and memory mapping
+# ========================================================================
 
-[[source]]
-id = "MOS-6526-1981"
-title = "6526 Complex Interface Adapter (CIA)"
-author = "MOS Technology / Commodore Semiconductor Group"
-publisher = "Commodore Business Machines"
-date = "1981-11"
-url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/6526.zip"
-archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+# 1.1. Manufacturer manuals
+# ------------------------------------------------------------------------
 
 [[source]]
 id = "C64-PRG-1982"
@@ -26,13 +33,32 @@ url = "https://www.zimmers.net/anonftp/pub/cbm/c64/manuals/c64-programmers-refer
 archive_url = "https://www.zimmers.net/anonftp/pub/cbm/c64/manuals/"
 
 [[source]]
-id = "MOS-6500-PROGRAMMING-1976"
-title = "MCS6500 Microcomputer Family Programming Manual"
-author = "MOS Technology"
-publisher = "MOS Technology"
-date = "1976-01"
-url = "https://archive.6502.org/books/mcs6500_family_programming_manual.pdf"
-archive_url = "https://archive.6502.org/books/"
+id = "C64-SERVICE-MANUAL-1985"
+title = "Service Manual, Model C64 Computer"
+author = "Commodore Business Machines"
+publisher = "Commodore Business Machines"
+date = "1985-02"
+url = "https://www.zimmers.net/anonftp/pub/cbm/schematics/computers/c64/manual/"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/schematics/computers/c64/"
+
+# 1.2. Circuit analysis
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "C64-PLA-DISSECTED-2012"
+title = "The C64 PLA Dissected"
+author = "Thomas Giesel"
+publisher = "Thomas Giesel"
+date = "2012"
+url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/c64_pla_dissected_r1.1_a4ds.pdf"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+
+# ========================================================================
+# 2. CPU — MOS 6502 and 6510
+# ========================================================================
+
+# 2.1. Manufacturer manuals and datasheets
+# ------------------------------------------------------------------------
 
 [[source]]
 id = "MOS-6500-HARDWARE-1976"
@@ -44,22 +70,13 @@ url = "https://archive.6502.org/books/mcs6500_family_hardware_manual.pdf"
 archive_url = "https://archive.6502.org/books/"
 
 [[source]]
-id = "SYNERTEK-6500-PROGRAMMING-1976"
-title = "SY6500/MCS6500 Microcomputer Family Programming Manual"
-author = "Synertek"
-publisher = "Synertek"
-date = "1976-08"
-url = "https://syncopate.us/books/Synertek6502ProgrammingManual.html"
-archive_url = "https://syncopate.us/books/"
-
-[[source]]
-id = "ROCKWELL-R6500-PROGRAMMING-1979"
-title = "R6500 Programming Manual"
-author = "Rockwell International"
-publisher = "Rockwell International"
-date = "1979"
-url = "https://datassette.org/manuais/us-estados-unidos-aplicativos-diversos-manuais/r6500-programming-manual"
-archive_url = "https://datassette.org/"
+id = "MOS-6500-PROGRAMMING-1976"
+title = "MCS6500 Microcomputer Family Programming Manual"
+author = "MOS Technology"
+publisher = "MOS Technology"
+date = "1976-01"
+url = "https://archive.6502.org/books/mcs6500_family_programming_manual.pdf"
+archive_url = "https://archive.6502.org/books/"
 
 [[source]]
 id = "MOS-6510-DATASHEET-1982"
@@ -71,6 +88,37 @@ url = "https://www.c64-wiki.com/wiki/File:Mos_6510_mpu_nov_1982.pdf"
 archive_url = "https://www.c64-wiki.com/wiki/6510"
 
 [[source]]
+id = "ROCKWELL-R6500-PROGRAMMING-1979"
+title = "R6500 Programming Manual"
+author = "Rockwell International"
+publisher = "Rockwell International"
+date = "1979"
+url = "https://datassette.org/manuais/us-estados-unidos-aplicativos-diversos-manuais/r6500-programming-manual"
+archive_url = "https://datassette.org/"
+
+[[source]]
+id = "SYNERTEK-6500-PROGRAMMING-1976"
+title = "SY6500/MCS6500 Microcomputer Family Programming Manual"
+author = "Synertek"
+publisher = "Synertek"
+date = "1976-08"
+url = "https://syncopate.us/books/Synertek6502ProgrammingManual.html"
+archive_url = "https://syncopate.us/books/"
+
+# 2.2. Circuit analysis
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "VISUAL6502-DECIMAL"
+title = "6502 Decimal Mode: datapath analysis and test vectors"
+author = "Visual6502 wiki contributors"
+publisher = "Visual6502 wiki / NESdev archive"
+url = "https://www.nesdev.org/wiki/Visual6502wiki/6502DecimalMode"
+
+# 2.3. Hardware observations and diagnostics
+# ------------------------------------------------------------------------
+
+[[source]]
 id = "CBM-HACKERS-6510-PORT-2000"
 title = "6510 and 8500 differences"
 author = "Nicolas Welte"
@@ -80,31 +128,147 @@ url = "https://www.softwolves.com/arkiv/cbm-hackers/3/3050.html"
 archive_url = "https://www.softwolves.com/arkiv/cbm-hackers/"
 
 [[source]]
-id = "C64-PLA-DISSECTED-2012"
-title = "The C64 PLA Dissected"
-author = "Thomas Giesel"
-publisher = "Thomas Giesel"
-date = "2012"
-url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/c64_pla_dissected_r1.1_a4ds.pdf"
-archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+id = "CPU-ANE-MEASUREMENTS"
+title = "ANE immediate operand stability, RDY observations and original C64 program constraints"
+author = "Groepaz"
+publisher = "VICE-testprogs physical-machine observations and diagnostic analysis"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CPU/ane/readme.txt"
+notes = "The analogue parameter varies between chips. EF is the selected reference profile, with bit 0 suppressed for a stretched operand read; this is not a claim that every physical 6510 has the same analogue value. No external emulator implementation used."
 
 [[source]]
-id = "C64-SERVICE-MANUAL-1985"
-title = "Service Manual, Model C64 Computer"
-author = "Commodore Business Machines"
-publisher = "Commodore Business Machines"
-date = "1985-02"
-url = "https://www.zimmers.net/anonftp/pub/cbm/schematics/computers/c64/manual/"
-archive_url = "https://www.zimmers.net/anonftp/pub/cbm/schematics/computers/c64/"
+id = "CPU-IRQ-DMA-MEASUREMENTS"
+title = "IRQ and NMI recognition during VIC DMA, physical C64 reference dumps"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/interrupts/irqdma/howto.txt"
+notes = "Diagnostic programs and physical reference data only. A stretched final read of a taken branch does not reopen its earlier IRQ sampling point."
 
 [[source]]
-id = "MOS-6581-DATASHEET-1982"
-title = "6581 Sound Interface Device (SID)"
+id = "CPU-IRQ-NMI-MEASUREMENTS"
+title = "Overlapping IRQ and NMI timer measurements on a physical C64"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/interrupts/irqnmi/readme.txt"
+notes = "Diagnostic timer measurements and dumpold.bin reference only. IRQ entry vector selection and the first handler instruction are checked without consulting emulator implementation code."
+
+[[source]]
+id = "CPU-MASKED-STORE-MEASUREMENTS"
+title = "SHX, SHY, SHA and SHS page crossing and DMA timing measured on C64 hardware"
+author = "Groepaz and Shrydar"
+publisher = "VICE-testprogs diagnostic hardware observations"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CPU/shxy/readme.txt"
+notes = "Physical 6510 and 8500 observations, also documented in CPU/sha and CPU/shs. Only diagnostic observations used; no emulator implementation."
+
+[[source]]
+id = "CPU-PORT-MEASUREMENTS"
+title = "6510 port reset state and floating input charge observations"
+author = "Groepaz"
+publisher = "VICE-testprogs hardware diagnostics"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CPU/cpuport/readme.txt"
+notes = "Reset DDR/DATA observations and the physical test1 output-to-input charge-retention sequence. Existing decay interval retained; no emulator implementation used."
+
+[[source]]
+id = "CPU-PORT-RAM-MEASUREMENTS"
+title = "Physical RAM writes beneath the 6510 integrated port"
+publisher = "VICE-testprogs original-hardware diagnostic observations"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/general/ram0001/readme.txt"
+
+# ========================================================================
+# 3. CIA — MOS 6526
+# ========================================================================
+
+# 3.1. Manufacturer datasheet
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "MOS-6526-1981"
+title = "6526 Complex Interface Adapter (CIA)"
 author = "MOS Technology / Commodore Semiconductor Group"
 publisher = "Commodore Business Machines"
-date = "1982"
-url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/6581.zip"
+date = "1981-11"
+url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/6526.zip"
 archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+
+# 3.2. Hardware observations and diagnostics
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "CIA-ICR-MEASUREMENTS"
+title = "Consecutive ICR read and write timing on original CIA hardware"
+author = "Wilfred Bos; Tobias Larsson; Groepaz"
+publisher = "VICE-testprogs hardware diagnostics and measured references"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/CIA/dd0dtest"
+notes = "dd0dtest scenarios 0B–19, cia-icr-test2 isolated-mask-write controls, and cia-int physical-machine references. Diagnostic observations only; no emulator implementation used."
+
+[[source]]
+id = "CIA-SERIAL-MEASUREMENTS"
+title = "MOS 6526 serial timing measurements on C64 and C128 hardware"
+author = "Andre Fachat and William McCabe"
+publisher = "Hardware measurements accompanying CIA shift-register diagnostics"
+url = "https://sourceforge.net/p/vice-emu/bugs/1219/"
+
+[[source]]
+id = "CIA-TIMER-B-MEASUREMENTS"
+title = "6526 Timer B ICR polling observations on original C64 hardware"
+author = "Michiel Boland"
+publisher = "Lemon64 hardware discussion"
+year = 2024
+url = "https://www.lemon64.com/forum/viewtopic.php?t=85753"
+
+[[source]]
+id = "CIA-TOD-MEASUREMENTS"
+title = "MOS 6526 TOD hardware observations and diagnostic protocols"
+author = "VICE test-suite contributors"
+publisher = "VICE test programmes"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CIA/tod/readme.txt"
+
+# ========================================================================
+# 4. VIC-II — MOS 6569
+# ========================================================================
+
+# 4.1. Technical reference
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "BAUER-VIC-II-1996"
+title = "The MOS 6567/6569 Video Controller (VIC-II) and Its Application in the Commodore 64"
+author = "Christian Bauer"
+publisher = "Christian Bauer"
+date = "1996-08-28"
+url = "https://www.cebix.net/VIC-Article.txt"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+
+# 4.2. Hardware observations and diagnostics
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "6569-COLOUR-TIMING-MEASUREMENTS"
+title = "6569 and 8565 colour-register output timing observations"
+author = "Daniel Kahlin (TLR)"
+url = "https://csdb.dk/forums/?roomid=11&topicid=158725"
+
+[[source]]
+id = "VIC-DMA-DELAY-IDLE-MEASUREMENTS"
+title = "6569R5 DMA-delay idle-byte address measurements"
+url = "https://sourceforge.net/p/vice-emu/bugs/1855/"
+
+[[source]]
+id = "VIC-GRAPHICS-MODE-MEASUREMENTS"
+title = "VIC-II mode transition diagnostics and PAL 6569 hardware captures"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/VICII/videomode"
+
+[[source]]
+id = "VIC-LIGHT-PEN-MEASUREMENTS"
+title = "6569 light-pen timing measurements by TLR and Hedning"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/VICII/split-tests/lightpen"
+
+[[source]]
+id = "VIC-SPRITE-COLLISION-MEASUREMENTS"
+title = "Identical overlapping sprite collision diagnostic and reference measurements"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/VICII/spritevssprite"
+
+# ========================================================================
+# 5. SID — MOS 6581
+# ========================================================================
+
+# 5.1. Manufacturer manuals and datasheets
+# ------------------------------------------------------------------------
 
 [[source]]
 id = "C64-PRG-SOUND-1982"
@@ -116,76 +280,26 @@ url = "https://www.commodore.ca/manuals/c64_programmers_reference/c64-programmer
 archive_url = "https://www.zimmers.net/anonftp/pub/cbm/c64/manuals/"
 
 [[source]]
-id = "COMMODORE-REU-USER-GUIDE-1985"
-title = "1700/1750 RAM Expansion Module User's Guide"
-author = "Commodore Electronics Limited"
-publisher = "Commodore Electronics Limited"
-date = "1985"
-url = "https://ar.c64.org/wiki/1700_1750_RAM_Expansion_Module_Users_Guide_Project64.txt"
-archive_url = "https://www.retro-commodore.eu/c128-hardware/"
-
-[[source]]
-id = "BAUER-VIC-II-1996"
-title = "The MOS 6567/6569 Video Controller (VIC-II) and Its Application in the Commodore 64"
-author = "Christian Bauer"
-publisher = "Christian Bauer"
-date = "1996-08-28"
-url = "https://www.cebix.net/VIC-Article.txt"
+id = "MOS-6581-DATASHEET-1982"
+title = "6581 Sound Interface Device (SID)"
+author = "MOS Technology / Commodore Semiconductor Group"
+publisher = "Commodore Business Machines"
+date = "1982"
+url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/6581.zip"
 archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
 
-[[source]]
-id = "CSG-8726-TECHREF-2008"
-title = "CSG 8726R1 Technical Reference"
-author = "Wolfgang Moser"
-publisher = "cbm-hackers / FUNET archive"
-date = "2008-08"
-url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/CSG8726TechRefDoc-1.0.zip"
-archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+# 5.2. Circuit reconstructions
+# ------------------------------------------------------------------------
 
 [[source]]
-id = "REU-REGISTERS-MAKELA"
-title = "REU Registers"
-author = "Marko Mäkelä"
-publisher = "Codebase64"
-date = "unknown"
-url = "https://codebase64.c64.org/doku.php?id=base:reu_registers"
-archive_url = "https://codebase64.c64.org/"
+id = "SID-ADSR-RATE-GATES"
+title = "SID ADSR register gating by GATE and R0"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/ADSR-registers"
 
 [[source]]
-id = "TAP-FORMAT-SCHEPERS"
-title = "Raw Tape Image File Format"
-author = "Peter Schepers"
-publisher = "64Copy Central"
-date = "2004-03-11"
-url = "https://ist.uwaterloo.ca/~schepers/formats/TAP.TXT"
-archive_url = "https://ist.uwaterloo.ca/~schepers/formats.html"
-
-[[source]]
-id = "ICOM-GMOD2-HARDWARE"
-title = "GMod2"
-author = "Individual Computers"
-publisher = "Individual Computers Wiki"
-date = "2025"
-url = "https://wiki.icomp.de/wiki/GMod2"
-archive_url = "https://wiki.icomp.de/wiki/Category:GMOD"
-
-[[source]]
-id = "STM-M93C86-DATASHEET"
-title = "M93C86 Microwire Serial Access EEPROM"
-author = "STMicroelectronics"
-publisher = "STMicroelectronics"
-date = "2003"
-url = "https://www.st.com/en/memories/m93c86-w.html"
-archive_url = "https://www.st.com/en/memories/m93c86-w.html"
-
-[[source]]
-id = "SID-SCHEMATICS-ENVELOPE"
-title = "MOS 6581/8580 SID Schematics: Envelope Generator"
-author = "Leandro Nini and ttlworks"
-publisher = "SID_schematics project"
-date = "2021"
-url = "https://github.com/libsidplayfp/SID_schematics/wiki/Envelope-Overview"
-archive_url = "https://sourceforge.net/p/sidplay-residfp/wiki/SID%20internals/"
+id = "SID-ENVELOPE-COUNTER-CIRCUIT"
+title = "SID envelope counter direction and enable circuit reconstruction"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/Counter-Logic"
 
 [[source]]
 id = "SID-SCHEMATICS-6581-DACS"
@@ -206,85 +320,43 @@ url = "https://github.com/libsidplayfp/SID_schematics/wiki/Data-Bus"
 archive_url = "https://sourceforge.net/p/sidplay-residfp/wiki/SID%20internals%20-%20Data%20Bus/"
 
 [[source]]
-id = "VISUAL6502-DECIMAL"
-title = "6502 Decimal Mode: datapath analysis and test vectors"
-author = "Visual6502 wiki contributors"
-publisher = "Visual6502 wiki / NESdev archive"
-url = "https://www.nesdev.org/wiki/Visual6502wiki/6502DecimalMode"
+id = "SID-SCHEMATICS-ENVELOPE"
+title = "MOS 6581/8580 SID Schematics: Envelope Generator"
+author = "Leandro Nini and ttlworks"
+publisher = "SID_schematics project"
+date = "2021"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/Envelope-Overview"
+archive_url = "https://sourceforge.net/p/sidplay-residfp/wiki/SID%20internals/"
 
 [[source]]
-id = "CIA-SERIAL-MEASUREMENTS"
-title = "MOS 6526 serial timing measurements on C64 and C128 hardware"
-author = "Andre Fachat and William McCabe"
-publisher = "Hardware measurements accompanying CIA shift-register diagnostics"
-url = "https://sourceforge.net/p/vice-emu/bugs/1219/"
+id = "SID-SCHEMATICS-NOISE"
+title = "Noise generator transistor reconstruction"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/Noise-Generator"
+notes = "Physical shift stages, feedback, TEST and RESET signals. No external emulator implementation used."
 
 [[source]]
-id = "CRT-FORMAT"
-title = "CRT cartridge image format: header and hardware revision field"
-author = "VICE contributors"
-publisher = "VICE file-format specification"
-url = "https://vice-emu.sourceforge.io/vice_17.html"
+id = "SID-WAVE-SELECTOR-CIRCUIT"
+title = "SID waveform selector transistor connections"
+url = "https://github.com/libsidplayfp/SID_schematics/wiki/Wave-Selector"
+
+# 5.3. Hardware observations and diagnostics
+# ------------------------------------------------------------------------
 
 [[source]]
-id = "REPLAY-HARDWARE-MAPS"
-title = "Extra Replay V0.1: original Retro Replay and Nordic Replay memory mappings"
-author = "Daniel Kahlin"
-publisher = "ReplayResources"
-year = 2018
-url = "https://rr.pokefinder.org/wiki/Extra_Replay"
+id = "SID-ENVELOPE-EXPONENTIAL-MEASUREMENTS"
+title = "SID exponential counter reset hardware diagnostic"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/SID/exp_counter_reset"
 
 [[source]]
-id = "CIA-TIMER-B-MEASUREMENTS"
-title = "6526 Timer B ICR polling observations on original C64 hardware"
-author = "Michiel Boland"
-publisher = "Lemon64 hardware discussion"
-year = 2024
-url = "https://www.lemon64.com/forum/viewtopic.php?t=85753"
+id = "SID-NOISE-INITIALISATION-MEASUREMENTS"
+title = "Noise initialisation measurements on ten 8580 chips and one 6581"
+url = "https://sourceforge.net/p/vice-emu/bugs/1920/"
 
 [[source]]
-id = "CIA-ICR-MEASUREMENTS"
-title = "Consecutive ICR read and write timing on original CIA hardware"
-author = "Wilfred Bos; Tobias Larsson; Groepaz"
-publisher = "VICE-testprogs hardware diagnostics and measured references"
-url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/CIA/dd0dtest"
-notes = "dd0dtest scenarios 0B–19, cia-icr-test2 isolated-mask-write controls, and cia-int physical-machine references. Diagnostic observations only; no emulator implementation used."
-[[source]]
-id = "CPU-MASKED-STORE-MEASUREMENTS"
-title = "SHX, SHY, SHA and SHS page crossing and DMA timing measured on C64 hardware"
-author = "Groepaz and Shrydar"
-publisher = "VICE-testprogs diagnostic hardware observations"
-url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CPU/shxy/readme.txt"
-notes = "Physical 6510 and 8500 observations, also documented in CPU/sha and CPU/shs. Only diagnostic observations used; no emulator implementation."
-[[source]]
-id = "CPU-PORT-MEASUREMENTS"
-title = "6510 port reset state and floating input charge observations"
-author = "Groepaz"
-publisher = "VICE-testprogs hardware diagnostics"
-url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CPU/cpuport/readme.txt"
-notes = "Reset DDR/DATA observations and the physical test1 output-to-input charge-retention sequence. Existing decay interval retained; no emulator implementation used."
-[[source]]
-id = "CPU-ANE-MEASUREMENTS"
-title = "ANE immediate operand stability, RDY observations and original C64 program constraints"
-author = "Groepaz"
-publisher = "VICE-testprogs physical-machine observations and diagnostic analysis"
-url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/CPU/ane/readme.txt"
-notes = "The analogue parameter varies between chips. EF is the selected reference profile, with bit 0 suppressed for a stretched operand read; this is not a claim that every physical 6510 has the same analogue value. No external emulator implementation used."
-[[source]]
-id = "CPU-PORT-RAM-MEASUREMENTS"
-title = "Physical RAM writes beneath the 6510 integrated port"
-publisher = "VICE-testprogs original-hardware diagnostic observations"
-url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/general/ram0001/readme.txt"
-[[source]]
-id = "CPU-IRQ-NMI-MEASUREMENTS"
-title = "Overlapping IRQ and NMI timer measurements on a physical C64"
-url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/interrupts/irqnmi/readme.txt"
-notes = "Diagnostic timer measurements and dumpold.bin reference only. IRQ entry vector selection and the first handler instruction are checked without consulting emulator implementation code."
-[[source]]
-id = "CPU-IRQ-DMA-MEASUREMENTS"
-title = "IRQ and NMI recognition during VIC DMA, physical C64 reference dumps"
-url = "https://github.com/libsidplayfp/VICE-testprogs/blob/ef8e8efe52f3d43df7acefad132c6506239bddee/interrupts/irqdma/howto.txt"
-notes = "Diagnostic programs and physical reference data only. A stretched final read of a taken branch does not reopen its earlier IRQ sampling point."
+id = "SID-NOISE-WRITEBACK-MEASUREMENTS"
+title = "Noise register writeback transitions and physical SID reference sequences"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/SID/wb_testsuite"
+
 [[source]]
 id = "SID-POWER-UP-MEASUREMENTS"
 title = "SID oscillator and noise initial-state measurements"
@@ -292,96 +364,128 @@ url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7ace
 notes = "Primary diagnostic checks: accumulator 555555, noise output FE after startup. Diagnostic source and measurements only."
 
 [[source]]
-id = "SID-SCHEMATICS-NOISE"
-title = "Noise generator transistor reconstruction"
-url = "https://github.com/libsidplayfp/SID_schematics/wiki/Noise-Generator"
-notes = "Physical shift stages, feedback, TEST and RESET signals. No external emulator implementation used."
-[[source]]
-id = "SID-ENVELOPE-COUNTER-CIRCUIT"
-title = "SID envelope counter direction and enable circuit reconstruction"
-url = "https://github.com/libsidplayfp/SID_schematics/wiki/Counter-Logic"
-
-[[source]]
-id = "SID-ENVELOPE-EXPONENTIAL-MEASUREMENTS"
-title = "SID exponential counter reset hardware diagnostic"
-url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/SID/exp_counter_reset"
-[[source]]
-id = "SID-WAVE-SELECTOR-CIRCUIT"
-title = "SID waveform selector transistor connections"
-url = "https://github.com/libsidplayfp/SID_schematics/wiki/Wave-Selector"
-
-[[source]]
-id = "SID-NOISE-WRITEBACK-MEASUREMENTS"
-title = "Noise register writeback transitions and physical SID reference sequences"
-url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/SID/wb_testsuite"
-[[source]]
-id = "SID-ADSR-RATE-GATES"
-title = "SID ADSR register gating by GATE and R0"
-url = "https://github.com/libsidplayfp/SID_schematics/wiki/ADSR-registers"
-[[source]]
-id = "SID-NOISE-INITIALISATION-MEASUREMENTS"
-title = "Noise initialisation measurements on ten 8580 chips and one 6581"
-url = "https://sourceforge.net/p/vice-emu/bugs/1920/"
-[[source]]
 id = "SID-PULSE-WRITEBACK-MEASUREMENTS"
 title = "Noise writeback sampling logs for physical 6581 chips 2586 and 2783"
 author = "Leandro Nini"
 year = 2018
 url = "https://sourceforge.net/p/vice-emu/bugs/_discuss/thread/cee789e4/e4dc/attachment/wb_testsuite.zip"
 
-[[source]]
-id = "VIC-LIGHT-PEN-MEASUREMENTS"
-title = "6569 light-pen timing measurements by TLR and Hedning"
-url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/VICII/split-tests/lightpen"
+# ========================================================================
+# 6. Disk drive — Commodore 1541 and MOS 6522 VIA
+# ========================================================================
+
+# 6.1. Manufacturer manuals and datasheets
+# ------------------------------------------------------------------------
+
 [[source]]
 id = "COMMODORE-1541-SERVICE-MANUAL"
 title = "1540/1541 Disk Drive Service Manual, PN 314002-01"
 author = "Commodore"
 year = 1985
 url = "https://www.zimmers.net/anonftp/pub/cbm/schematics/drives/new/1541/1540-1541_Disk_Drive_Service_Manual_314002-01_(1985_Nov).pdf"
+
 [[source]]
 id = "MOS-6522-DATASHEET"
 title = "MOS Technology 6522 Versatile Interface Adapter"
 url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/6522-VIA.txt"
 
-[[source]]
-id = "VIA-HARDWARE-DIAGNOSTICS"
-title = "VIA timer and port measurements on 1541C and 1541-II"
-url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/drive/viavarious"
-[[source]]
-id = "6569-COLOUR-TIMING-MEASUREMENTS"
-title = "6569 and 8565 colour-register output timing observations"
-author = "Daniel Kahlin (TLR)"
-url = "https://csdb.dk/forums/?roomid=11&topicid=158725"
-[[source]]
-id = "D64-SCANNER-DIAGNOSTICS"
-title = "1541 sector scanner and D64 error-map diagnostics"
-url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/drive/scanner"
+# 6.2. Hardware observations and diagnostics
+# ------------------------------------------------------------------------
+
 [[source]]
 id = "1541-HEAD-MOTION-OBSERVATIONS"
 title = "1541-II stepper motion, settling and rapid field reversals"
 author = "Linus Akesson"
 year = 2022
 url = "https://www.linusakesson.net/music/partita-prelude/index.php"
-[[source]]
-id = "REU-TIMING-HARDWARE-MEASUREMENTS"
-title = "REU DMA versus VIC-II DMA: hardware reference recordings and timing diagnostics"
-url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/REU/reutiming2"
 
 [[source]]
-id = "VIC-SPRITE-COLLISION-MEASUREMENTS"
-title = "Identical overlapping sprite collision diagnostic and reference measurements"
-url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/VICII/spritevssprite"
+id = "D64-SCANNER-DIAGNOSTICS"
+title = "1541 sector scanner and D64 error-map diagnostics"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/drive/scanner"
 
 [[source]]
-id = "VIC-GRAPHICS-MODE-MEASUREMENTS"
-title = "VIC-II mode transition diagnostics and PAL 6569 hardware captures"
-url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/VICII/videomode"
+id = "VIA-HARDWARE-DIAGNOSTICS"
+title = "VIA timer and port measurements on 1541C and 1541-II"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/drive/viavarious"
+
+# ========================================================================
+# 7. Cassette — Commodore 1530
+# ========================================================================
+
+# 7.1. Manufacturer service manual
+# ------------------------------------------------------------------------
 
 [[source]]
-id = "VIC-DMA-DELAY-IDLE-MEASUREMENTS"
-title = "6569R5 DMA-delay idle-byte address measurements"
-url = "https://sourceforge.net/p/vice-emu/bugs/1855/"
+id = "DATASETTE-SERVICE-1984"
+title = "Datasette Service Manual, C2N/1530/1531"
+author = "Commodore Business Machines"
+publisher = "Commodore"
+date = "1984-10"
+url = "https://www.vic-20.it/wp-content/uploads/C2N-1530-1531_service_manual.pdf"
+
+# 7.2. Recording protocols
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "COMPUTE-TURBOTAPE-1985"
+title = "How TurboTape Works"
+author = "Harrie De Ceukelaire, Ottis Cowper and Charles Brannon"
+publisher = "COMPUTE!"
+date = "1985-02"
+url = "https://www.atarimagazines.com/compute/issue57/turbotape.html"
+
+# 7.3. Image format
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "TAP-FORMAT-SCHEPERS"
+title = "Raw Tape Image File Format"
+author = "Peter Schepers"
+publisher = "64Copy Central"
+date = "2004-03-11"
+url = "https://ist.uwaterloo.ca/~schepers/formats/TAP.TXT"
+archive_url = "https://ist.uwaterloo.ca/~schepers/formats.html"
+
+# ========================================================================
+# 8. RAM expansion — REU and CSG 8726
+# ========================================================================
+
+# 8.1. Manufacturer manual
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "COMMODORE-REU-USER-GUIDE-1985"
+title = "1700/1750 RAM Expansion Module User's Guide"
+author = "Commodore Electronics Limited"
+publisher = "Commodore Electronics Limited"
+date = "1985"
+url = "https://ar.c64.org/wiki/1700_1750_RAM_Expansion_Module_Users_Guide_Project64.txt"
+archive_url = "https://www.retro-commodore.eu/c128-hardware/"
+
+# 8.2. Technical references
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "CSG-8726-TECHREF-2008"
+title = "CSG 8726R1 Technical Reference"
+author = "Wolfgang Moser"
+publisher = "cbm-hackers / FUNET archive"
+date = "2008-08"
+url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/CSG8726TechRefDoc-1.0.zip"
+archive_url = "https://www.zimmers.net/anonftp/pub/cbm/documents/chipdata/"
+
+[[source]]
+id = "REU-REGISTERS-MAKELA"
+title = "REU Registers"
+author = "Marko Mäkelä"
+publisher = "Codebase64"
+date = "unknown"
+url = "https://codebase64.c64.org/doku.php?id=base:reu_registers"
+archive_url = "https://codebase64.c64.org/"
+
+# 8.3. Hardware observations and diagnostics
+# ------------------------------------------------------------------------
 
 [[source]]
 id = "REU-RECALL-DOUBLE-WRITE-MEASUREMENT"
@@ -392,3 +496,92 @@ url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7ace
 id = "REU-SPRITE-STREAM-MEASUREMENTS"
 title = "Real Commodore REU sprite-stream timing measurements, Walt/Bonzai"
 url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/REU/bonzai"
+
+[[source]]
+id = "REU-TIMING-HARDWARE-MEASUREMENTS"
+title = "REU DMA versus VIC-II DMA: hardware reference recordings and timing diagnostics"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/ef8e8efe52f3d43df7acefad132c6506239bddee/REU/reutiming2"
+
+# ========================================================================
+# 9. Cartridges
+# ========================================================================
+
+# 9.1. Hardware and programming references
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "EASYFLASH-PROGRAMMERS-GUIDE"
+title = "EasyFlash Programmer’s Guide"
+author = "Thomas Giesel"
+year = 2012
+url = "https://skoe.de/easyflash/files/devdocs/EasyFlash-ProgRef.pdf"
+
+[[source]]
+id = "ICOM-GMOD2-HARDWARE"
+title = "GMod2"
+author = "Individual Computers"
+publisher = "Individual Computers Wiki"
+date = "2025"
+url = "https://wiki.icomp.de/wiki/GMod2"
+archive_url = "https://wiki.icomp.de/wiki/Category:GMOD"
+
+[[source]]
+id = "PAGEFOX-HARDWARE"
+title = "Chameleon Programmer’s Manual, section 8.30: PageFox"
+author = "Peter Wendrich / Individual Computers"
+publisher = "Individual Computers"
+url = "https://syntiac.com/pdf/chameleon_progmanual_beta9.pdf"
+
+[[source]]
+id = "REPLAY-HARDWARE-MAPS"
+title = "Extra Replay V0.1: original Retro Replay and Nordic Replay memory mappings"
+author = "Daniel Kahlin"
+publisher = "ReplayResources"
+year = 2018
+url = "https://rr.pokefinder.org/wiki/Extra_Replay"
+
+# 9.2. Flash and EEPROM datasheets
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "AM29F040B-DATASHEET"
+title = "Am29F040B, 4 Megabit CMOS 5.0 Volt-only Sector Erase Flash Memory, revision 21445E4"
+author = "AMD"
+year = 2006
+url = "https://www.silicon-ark.co.uk/datasheets/am29f040b%20datasheet%20-%20AMD.pdf"
+
+[[source]]
+id = "STM-M93C86-DATASHEET"
+title = "M93C86 Microwire Serial Access EEPROM"
+author = "STMicroelectronics"
+publisher = "STMicroelectronics"
+date = "2003"
+url = "https://www.st.com/en/memories/m93c86-w.html"
+archive_url = "https://www.st.com/en/memories/m93c86-w.html"
+
+# 9.3. Hardware observations and diagnostics
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "AR-NORDIC-MODE-MEASUREMENTS"
+title = "Action Replay and Nordic Power mode $22 hardware measurements"
+author = "VICE test-programme contributors"
+publisher = "VICE test programmes"
+url = "https://github.com/libsidplayfp/VICE-testprogs/blob/master/C64/carts/nordicpower/readme.txt"
+
+[[source]]
+id = "RETRO-REPLAY-VIC-MAPPING"
+title = "Retro Replay VIC-II memory mapping diagnostic and hardware observations"
+author = "VICE test-programme contributors"
+publisher = "VICE test programmes"
+url = "https://github.com/libsidplayfp/VICE-testprogs/tree/master/C64/carts/ultimax"
+
+# 9.4. Image format
+# ------------------------------------------------------------------------
+
+[[source]]
+id = "CRT-FORMAT"
+title = "CRT cartridge image format: header and hardware revision field"
+author = "VICE contributors"
+publisher = "VICE file-format specification"
+url = "https://vice-emu.sourceforge.io/vice_17.html"

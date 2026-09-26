@@ -43,6 +43,9 @@ pub struct CartridgeConfiguration {
 	pub roml_bank: usize,
 	pub romh_bank: usize,
 	pub phi2_ram: bool,
+	pub contended_ram_window: Option<(u16, u16)>,
+	pub independent_write_window: Option<(u16, u16)>,
+	pub exclusive_ram_window: Option<(u16, u16)>,
 	pub irq_low: bool,
 	pub nmi_low: bool,
 }
@@ -57,6 +60,9 @@ impl CartridgeConfiguration {
 			roml_bank: 0,
 			romh_bank: 0,
 			phi2_ram: false,
+			contended_ram_window: None,
+			exclusive_ram_window: None,
+			independent_write_window: None,
 			irq_low: false,
 			nmi_low,
 		}

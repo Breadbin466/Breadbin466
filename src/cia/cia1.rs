@@ -136,9 +136,14 @@ impl Cia1 {
 		self.inner.pra | !self.inner.ddra
 	}
 
-	/* PB4 shares the active-low keyboard/joystick line with the VIC-II light-pen input. */
+	/* PB4 shares the active-low keyboard/joystick line with the VIC-II light-pen
+	 * input. A pressed key in row four pulls it low when its port-A column is
+	 * selected; PB6/PB7 timer outputs cannot affect this wire. */
 	pub fn light_pen_pin_high(&self) -> bool {
-		self.read_port_b() & 0x10 != 0
+		let out_a = self.inner.pra | !self.inner.ddra;
+		let out_b = self.inner.prb | !self.inner.ddrb;
+		(self.joystick_1 & out_b & 0x10) != 0
+			&& (out_a | self.keyboard_matrix[4]) == 0xFF
 	}
 
 	pub fn set_flag_pin(&mut self, state: bool) {

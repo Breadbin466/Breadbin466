@@ -12,6 +12,7 @@ pub mod datassette;
 pub mod emulator;
 pub mod fdd1541;
 pub mod iec;
+mod host_files;
 pub mod memory;
 pub mod motherboard;
 pub mod mouse1351;

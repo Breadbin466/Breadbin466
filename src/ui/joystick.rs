@@ -82,10 +82,12 @@ impl JoystickHost {
 		Ok(())
 	}
 
-	/* Cycling honours control-port ownership. When a 1351 reserves port 1,
+	/* Cycling first refreshes device events, including while emulation is paused.
+	 * It honours control-port ownership. When a 1351 reserves port 1,
 	 * joystick routing can still select port 2 or no joystick, but it can never
 	 * attach a host joystick to the occupied port. */
 	pub fn cycle(&mut self) {
+		self.process_gilrs_events();
 		if self.connected_count > 0 {
 			if self.port1_reserved {
 				self.swapped = false;

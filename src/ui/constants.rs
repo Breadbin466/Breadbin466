@@ -30,16 +30,11 @@ pub(crate) const SS_LEFT_STYLE: u32 = 0x0000_0000;
 pub(crate) const SS_ICON_STYLE: u32 = 0x0000_0003;
 #[cfg(target_os = "windows")]
 pub(crate) const SUBTLE_COLOUR: u32 = 0x0060_6060;
-/* OSD glyphs and transport symbols reuse the bundled C64 character ROM so diagnostic text matches the machine visual language. */
+/* OSD text and drive indicators reuse the bundled C64 character ROM so diagnostic text matches the machine visual language. */
 pub(crate) const CHAR_ROM: &[u8] = include_bytes!("../../roms/characters_901225-01.bin");
 pub(crate) const FONT_OFFSET_UPPER: usize = 0;
 pub(crate) const FONT_OFFSET_LOWER: usize = 2048;
 pub(crate) const PETSCII_CIRCLE: usize = 0x51;
-pub(crate) const PETSCII_DIAMOND: usize = 0x5A;
-pub(crate) const PETSCII_REWIND: usize = 0x3C;
-pub(crate) const PETSCII_FWD: usize = 0x3E;
-pub(crate) const PETSCII_STOP: usize = 0x66;
-pub(crate) const PETSCII_EJECT: usize = 30;
 /* OSD colours encode persistent text, active-low style indicators and inactive transport controls in the CPU-rendered status surface. */
 pub(crate) const COLOR_LED_GREEN_ON: u32 = 0xFF4BA646;
 pub(crate) const COLOR_LED_GREEN_OFF: u32 = 0xFF1A3A18;
@@ -48,18 +43,17 @@ pub(crate) const COLOR_LED_RED_OFF: u32 = 0xFF0A0A3A;
 pub(crate) const COLOR_TEXT: u32 = 0xFF000000;
 pub(crate) const COLOR_REVERSE_BG: u32 = 0xFF000000;
 pub(crate) const COLOR_REVERSE_FG: u32 = 0xFFFFFFFF;
-pub(crate) const COLOR_TRANSPORT_ON: u32 = 0xFF000000;
+/* RGBA texture bytes are packed as 0xAABBGGRR on the supported little-endian hosts. */
+pub(crate) const COLOR_TRANSPORT_PLAY: u32 = 0xFF36852B;
+pub(crate) const COLOR_TRANSPORT_READY: u32 = 0xFF303030;
+pub(crate) const COLOR_TRANSPORT_RECORD_ON: u32 = 0xFF2020D5;
 pub(crate) const COLOR_TRANSPORT_OFF: u32 = 0xFFAAAAAA;
 /* Host input thresholds and audio queue geometry define presentation services rather than emulated hardware timing. */
-pub(crate) const WINDOW_TITLE: &str = "Breadbin466 0.12.1 – PAL Assy 250466 Commodore 64 emulator";
+pub(crate) const WINDOW_TITLE: &str = concat!("Breadbin466 ", env!("CARGO_PKG_VERSION"), " – PAL Assy 250466 Commodore 64 emulator");
 pub(crate) const THRESHOLD: f32 = 0.4;
-#[cfg(not(target_os = "windows"))]
 pub(crate) const AUDIO_SAMPLE_RATE: u32 = 44_100;
 pub(crate) const BUFFER_CAPACITY: u16 = 1 << 12;
-pub(crate) const BUFFER_MASK: u16 = BUFFER_CAPACITY - 1;
-/* Inspector and OSD geometry is expressed in native framebuffer pixels and fixed eight-pixel glyph cells. */
-pub(crate) const INSPECTOR_WIDTH: usize = 480;
-pub(crate) const INSPECTOR_HEIGHT: usize = 480;
+/* OSD geometry is expressed in native framebuffer pixels and fixed eight-pixel glyph cells. */
 pub(crate) const LINE_HEIGHT: usize = 10;
 pub(crate) const OSD_MEDIA_LABEL_OVERHEAD: usize =
 	"Disk: ".len() + "  -  Tape: ".len() + "  -  Cartridge: ".len();
@@ -69,14 +63,14 @@ pub(crate) const OSD_TOOLTIP_PADDING_Y: usize = 4;
 pub(crate) const OSD_SAFE_PADDING_X: usize = 16;
 pub(crate) const OSD_TOOLTIP_BORDER: u32 = 0xFF000000;
 pub(crate) const OSD_TOOLTIP_BACKGROUND: u32 = 0xFFFFFFFF;
-pub(crate) const MARGIN_X: usize = 8;
-pub(crate) const MARGIN_Y: usize = 8;
 pub(crate) const OSD_GUI_HEIGHT_CHARS: usize = 12;
 pub(crate) const OSD_BUFFER_SCALE: usize = 2;
 pub(crate) const OSD_TRANSPORT_COUNT: usize = 6;
+pub(crate) const OSD_TRANSPORT_PITCH: usize = 12;
+pub(crate) const OSD_TRANSPORT_RIGHT: usize = 86;
 /* Application identity strings are shared by native About implementations and packaging metadata. */
 pub const APP_NAME: &str = "Breadbin466";
-pub const VERSION: &str = "0.12.1";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const COPYRIGHT: &str = "Copyright © 2025–2026 The Breadbin466 Team";
 pub const DESCRIPTION_PARAGRAPHS: [&str; 3] = [
 	"Breadbin466 is a cycle-accurate Commodore 64 emulator written from scratch in Rust.",

@@ -18,6 +18,8 @@ use winit::window::{Window, WindowAttributes};
 use crate::emulator::Result;
 use crate::ui::window_icon::{load_gtk_icon, load_window_icon};
 
+static FOCUS_LOST: AtomicBool = AtomicBool::new(false);
+
 static CLOSE_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /* Linux embeds the undecorated X11 winit child inside a GTK toplevel. GTK owns menus, accelerators, decorations and fullscreen state, while winit remains the rendering/input surface. */
@@ -79,19 +81,24 @@ impl Shell {
 		window.add(&root);
 		window.connect_delete_event(|_, _| {
 			CLOSE_REQUESTED.store(true, Ordering::Release);
-			glib::Propagation::Stop
+			gtk::glib::Propagation::Stop
 		});
 		/* The XEmbed child does not reliably forward keyboard events through winit on
 		 * every GTK/X11 combination. Capturing the GTK toplevel events preserves the
 		 * physical C64 keyboard path while menu accelerators continue to be handled by
 		 * GTK itself. Events are queued and consumed on the winit application thread. */
+		window.connect_focus_out_event(|_, _| {
+			KEY_EVENTS.with(|events| events.borrow_mut().clear());
+			FOCUS_LOST.store(true, Ordering::Release);
+			gtk::glib::Propagation::Proceed
+		});
 		window.connect_key_press_event(|_, event| {
 			queue_key_event(event, ElementState::Pressed);
-			glib::Propagation::Proceed
+			gtk::glib::Propagation::Proceed
 		});
 		window.connect_key_release_event(|_, event| {
 			queue_key_event(event, ElementState::Released);
-			glib::Propagation::Proceed
+			gtk::glib::Propagation::Proceed
 		});
 		window.show_all();
 		socket.add_id(xid as gtk::xlib::Window);
@@ -153,6 +160,8 @@ impl Shell {
 	pub fn clear_close_requested() {
 		CLOSE_REQUESTED.store(false, Ordering::Release);
 	}
+
+	pub fn take_focus_lost() -> bool { FOCUS_LOST.swap(false, Ordering::AcqRel) }
 
 	pub fn poll_key_event() -> Option<(KeyCode, ElementState)> {
 		KEY_EVENTS.with(|events| events.borrow_mut().pop_front())

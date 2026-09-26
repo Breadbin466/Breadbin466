@@ -63,13 +63,7 @@ impl SystemBuilder {
 		println!("System Initialised.");
 
 		/* Audio and joystick failures degrade the corresponding host feature without invalidating the emulated computer itself. */
-		let audio = match AudioHost::new() {
-			Ok(host) => Some(host),
-			Err(error) => {
-				eprintln!("Audio initialisation error: {}", error);
-				None
-			}
-		};
+		let audio = Some(AudioHost::new());
 		let joystick = match JoystickHost::new() {
 			Ok(host) => Some(host),
 			Err(error) => {

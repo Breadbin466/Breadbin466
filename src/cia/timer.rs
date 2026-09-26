@@ -201,6 +201,38 @@ impl Timer {
 	/* The decrement, clock scheduling and latch-transfer phases are evaluated in a fixed order so an underflow can request a reload without erasing an overlapping software load already moving through the pipeline. */
 	/* One timer step first advances pending loads and clock requests, then performs the decrement selected for this cycle. Underflow handling may reload, stop one-shot operation and update the PB output in the same step. */
 	pub fn step(&mut self) -> bool {
+		/* With no pending load, a halted clock and a fully occupied PHI2
+		 * pipeline remain stable until a command or underflow changes them. */
+		if self.counter_load == CounterLoadState::Quiescent {
+			let started = self.started();
+			if self.counter_clock == CounterClockState::Halted && !started {
+				return self.finish_steady_cycle();
+			}
+			if self.counter_clock == CounterClockState::DecrementAndStartDelay
+				&& started && self.uses_phi2() && self.counter > 1 {
+				self.counter -= 1;
+				return self.finish_steady_cycle();
+			}
+		}
+		self.step_pipeline()
+	}
+
+	#[inline(always)]
+	fn finish_steady_cycle(&mut self) -> bool {
+		self.cnt_edge_pending = false;
+		self.run_mode = if self.one_shot() {
+			RunModeState::OneShotArmed
+		} else {
+			RunModeState::Continuous
+		};
+		self.pb_pulse = false;
+		false
+	}
+
+	/* Transitions retain the ordered decrement, clock, load and underflow
+	 * phases, including overlapping software loads and one-shot stops. */
+	#[inline(never)]
+	fn step_pipeline(&mut self) -> bool {
 		if self.counter_clock.decrements_this_cycle() && self.counter != 0 {
 			self.counter -= 1;
 		}

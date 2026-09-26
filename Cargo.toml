@@ -3,42 +3,41 @@ cargo-features = ["trim-paths"]
 
 [package]
 name = "Breadbin466"
-version = "0.12.1"
+version = "0.99.0"
 edition = "2024"
 license = "MIT"
 
 # The shared dependency set covers audio, input, windowing, rendering, image I/O,
 # native file dialogs and serialisation used by every supported desktop platform.
 [dependencies]
-cpal = "0.18.1"
+cpal = "0.18.2"
 gilrs = "0.11.2"
 winit = "0.30.13"
-wgpu = "29.0.3"
-bytemuck = { version = "1.25", features = ["derive"] }
-pollster = "0.4"
-png = "0.18"
+wgpu = "30.0.1"
+bytemuck = "1.25.2"
+pollster = "1.0.1"
 rfd = "0.17.2"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
-lzma-rust2 = { version = "0.18", default-features = false, features = ["std", "encoder"] }
-sha2 = "0.10"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+lzma-rust2 = { version = "0.20.1", default-features = false, features = ["std", "encoder"] }
+sha2 = "0.11.0"
 
 # Native menu and application integration are selected per target so that platform
 # concerns remain outside the emulation core.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
-objc2-foundation = { version = "0.3.2", features = ["NSObject", "NSString", "NSDictionary", "NSAttributedString"] }
-objc2-app-kit = { version = "0.3.2", features = ["NSAlert", "NSApplication", "NSButton", "NSButtonCell", "NSMenu", "NSMenuItem", "NSEvent", "NSCell", "NSControl", "NSOpenPanel", "NSPopUpButton", "NSResponder", "NSSavePanel", "NSTextField", "NSView", "NSWindow", "NSAttributedString"] }
-dispatch2 = "0.3.1"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSDictionary", "NSAttributedString"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSGraphics", "NSText", "NSAlert", "NSApplication", "NSButton", "NSButtonCell", "NSMenu", "NSMenuItem", "NSEvent", "NSCell", "NSControl", "NSOpenPanel", "NSPopUpButton", "NSResponder", "NSSavePanel", "NSTextField", "NSView", "NSWindow", "NSAttributedString", "NSTabView", "NSTabViewItem", "NSTextView", "NSTextContainer", "NSTextStorage", "NSScrollView", "NSClipView", "NSFont", "NSColor", "NSParagraphStyle"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-raw-window-handle = "0.6.2"
 wfd = "0.1.8"
 windows = { version = "=0.62.2", features = [
 	"Win32_Foundation",
 	"Win32_Graphics_Gdi",
 	"Win32_System_LibraryLoader",
 	"Win32_UI_HiDpi",
+	"Win32_UI_Controls",
+	"Win32_UI_Controls_RichEdit",
 	"Win32_UI_WindowsAndMessaging",
 ] }
 windows-sys = { version = "0.61.2", features = [
@@ -51,11 +50,7 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gdk-pixbuf = "0.18"
-gio = "0.18"
-glib = "0.18"
-gtk = "0.18"
-raw-window-handle = "0.6.2"
+gtk = "0.19.0"
 
 # Release builds favour deterministic whole-program optimisation and a small final
 # executable over incremental compilation speed or recoverable unwinding.
@@ -73,7 +68,7 @@ trim-paths = "all"
 [package.metadata.bundle]
 name = "Breadbin466"
 identifier = "com.foursixsix.breadbin466"
-version = "0.12.1"
+version = "0.99.0"
 copyright = "Copyright © 2025–2026 The Breadbin466 Team"
 category = "public.app-category.entertainment"
 short_description = "C64 Emulator"

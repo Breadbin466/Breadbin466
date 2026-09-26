@@ -25,6 +25,7 @@ pub mod mapper_interface;
 pub mod mapper_kcs_power;
 pub mod mapper_magic_desk;
 pub mod mapper_ocean;
+pub mod mapper_pagefox;
 pub mod mapper_retro_replay;
 pub mod mapper_rgcd;
 pub mod mapper_simons_basic;
@@ -35,3 +36,4 @@ pub mod mapper_super_snapshot_5;
 pub mod mapper_zaxxon;
 
 pub use cartridge_device::Cartridge;
+mod flash_chip;

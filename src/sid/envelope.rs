@@ -129,6 +129,12 @@ impl Envelope {
 		self.refresh_rate_target_phase();
 	}
 
+	/* Analogue excitation follows the written GATE edge, independently of
+	 * the delayed envelope-control sampling stages. */
+	pub(super) fn gate_is_high(&self) -> bool {
+		self.gate.input
+	}
+
 	/* A rising GATE unlocks the counter immediately. Counting direction follows the sampled control path. */
 	pub fn set_gate(&mut self, gate: bool) {
 		if gate && !self.gate.input {

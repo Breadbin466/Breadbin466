@@ -19,8 +19,7 @@ pub(super) fn handle_menu_event(orchestrator: &mut Orchestrator, id: &str) {
 	} else if id == ids.pause {
 		orchestrator.paused = !orchestrator.paused;
 		orchestrator.context.machine.set_paused(orchestrator.paused);
-		orchestrator.timing.resynchronise();
-		orchestrator.context.input.clear_all();
+		orchestrator.resynchronise_host();
 		orchestrator
 			.context
 			.menu
@@ -54,6 +53,7 @@ pub(super) fn handle_menu_event(orchestrator: &mut Orchestrator, id: &str) {
 	/* Host presentation controls remain outside MenuHandler because they modify orchestrator-owned audio or window state. */
 	} else if id == ids.debug_mute_warp {
 		orchestrator.mute_sid_warp = !orchestrator.mute_sid_warp;
+		if let Some(audio) = orchestrator.context.audio.as_mut() { audio.discard_pending(); }
 		orchestrator
 			.context
 			.menu

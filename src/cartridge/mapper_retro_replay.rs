@@ -7,6 +7,7 @@ use super::constants::{
 };
 
 use super::bank_storage::BankStorage;
+use super::bus_configuration::CartridgeMode;
 use super::bus_configuration::IoRead;
 use super::mapper_interface::{CartridgeInfo, CartridgeMapper, LineState, MapperType};
 
@@ -111,6 +112,10 @@ impl CartridgeMapper for RetroReplayMapper {
 	fn set_hardware_revision(&mut self, revision: u8) {
 		self.nordic = revision == 1;
 	}
+	fn exclusive_ram_window(&self) -> Option<(u16, u16)> {
+		(self.active && self.ram_at_a000).then_some((0xA000, 0xBFFF))
+	}
+
 	fn reset(&mut self) {
 		self.bank = 0;
 		self.mode = 0;
@@ -311,6 +316,13 @@ impl CartridgeMapper for RetroReplayMapper {
 				}
 			}
 		}
+	}
+
+	/* Retro Replay changes the CPU half-cycle mapping without exposing its
+	 * ROM to PHI1 graphics fetches. Matrix and sprite PHI2 fetches still
+	 * observe the selected cartridge map (RETRO-REPLAY-VIC-MAPPING). */
+	fn phase_modes(&self, lines: LineState) -> (CartridgeMode, CartridgeMode) {
+		(CartridgeMode::Ram, CartridgeMode::from_lines(lines.game, lines.exrom))
 	}
 
 	fn freeze_keeps_nmi(&self) -> bool {

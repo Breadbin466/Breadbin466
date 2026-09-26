@@ -4,7 +4,7 @@
 
 use crate::emulator::context::AppContext;
 use crate::ui::constants::{
-	OSD_BUFFER_SCALE, OSD_GUI_HEIGHT_CHARS, OSD_SAFE_PADDING_X, OSD_TRANSPORT_COUNT,
+	OSD_BUFFER_SCALE, OSD_GUI_HEIGHT_CHARS,
 };
 use std::path::PathBuf;
 
@@ -35,7 +35,13 @@ impl InputRouter {
 
 	/* Mouse coordinates are mapped back into the renderer source buffer before hit-testing the OSD transport, so controls remain stable under arbitrary window scaling. */
 	pub fn handle_mouse_click(cursor_pos: (f64, f64), context: &mut AppContext) {
+		if !context.renderer.osd_enabled || !context.datassette.has_tape() {
+			return;
+		}
 		let (mx, my) = cursor_pos;
+		if !mx.is_finite() || !my.is_finite() || mx < 0.0 || my < 0.0 {
+			return;
+		}
 		let win_size = context.window.inner_size();
 		let win_w = win_size.width as f64;
 		let win_h = win_size.height as f64;
@@ -50,28 +56,16 @@ impl InputRouter {
 		let by = ((my / win_h) * buf_h as f64) as usize;
 
 		let gui_px = OSD_GUI_HEIGHT_CHARS * OSD_BUFFER_SCALE;
-		let bar_start_y = buf_h.saturating_sub(gui_px);
-		if by < bar_start_y {
+		let Some(slot) = crate::ui::osd::transport_hit(buf_w, buf_h, gui_px, bx, by) else {
 			return;
-		}
-
-		let transport_x =
-			buf_w.saturating_sub(56 + OSD_TRANSPORT_COUNT * 8 + 8 + OSD_SAFE_PADDING_X);
-		if bx < transport_x {
-			return;
-		}
-
-		let slot = (bx - transport_x) / 8;
-		if slot >= OSD_TRANSPORT_COUNT {
-			return;
-		}
+		};
 
 		match slot {
 			0 => context.toggle_tape_record(),
 			1 => context.toggle_tape_playback(),
-			2 => context.datassette.rewind(),
-			3 => {}
-			4 => context.stop_tape(),
+			2 => context.stop_tape(),
+			3 => context.datassette.rewind(),
+			4 => context.datassette.fast_forward(),
 			5 => {
 				context.eject_tape();
 			}

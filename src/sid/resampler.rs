@@ -98,22 +98,25 @@ impl FractionalFirStage {
 		let fractional_back = self.phase_accumulator as f64 * self.target_frequency_inverse;
 		let phase_position = fractional_back.clamp(0.0, 1.0) * SID_RESAMPLER_PHASES as f64;
 		let lower_phase = phase_position as usize;
-		let upper_phase = lower_phase + 1;
+
 		let fraction = (phase_position - lower_phase as f64) as f32;
-		let lower = self.convolve(lower_phase);
-		let upper = self.convolve(upper_phase);
+		let (lower, upper) = self.convolve_pair(lower_phase);
 		Some(lower + (upper - lower) * fraction)
 	}
 
 	#[inline(always)]
-	fn convolve(&self, phase: usize) -> f32 {
-		let coefficients = &self.coefficients[phase * self.tap_count..(phase + 1) * self.tap_count];
+	/* Both phases share sample loads while retaining the original accumulation order in each phase. */
+	fn convolve_pair(&self, phase: usize) -> (f32, f32) {
+		let rows = &self.coefficients[phase * self.tap_count..(phase + 2) * self.tap_count];
+		let (lower, upper) = rows.split_at(self.tap_count);
 		let samples = &self.ring[self.write_index..self.write_index + self.tap_count];
-		let mut accumulator = 0.0f32;
-		for index in 0..self.tap_count {
-			accumulator += samples[index] * coefficients[index];
+		let mut lower_sum = 0.0f32;
+		let mut upper_sum = 0.0f32;
+		for ((sample, lower), upper) in samples.iter().zip(lower).zip(upper) {
+			lower_sum += sample * lower;
+			upper_sum += sample * upper;
 		}
-		accumulator
+		(lower_sum, upper_sum)
 	}
 
 	/* Priming fills the FIR history with the first real sample, avoiding an artificial ramp from silence at stream start. */
